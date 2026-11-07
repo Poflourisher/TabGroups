@@ -1,0 +1,18 @@
+Tab Groups for Unreal Engine 5.8 (Windows)
+
+INSTALL
+1. Close the editor for your project.
+2. Copy the TabGroups folder into your project's Plugins folder,
+   for example:  YourProject\Plugins\TabGroups\TabGroups.uplugin
+   Create the Plugins folder if it doesn't exist.
+3. Open the project. The plugin is on by default.
+
+No compiling is needed, and it works in Blueprint-only projects.
+
+TRY IT
+Right-click any tab and choose "Add tab to new group".
+See README.md in the TabGroups folder for everything else.
+
+IF SOMETHING GOES WRONG
+Start the editor with -NoTabGroups to switch the plugin off,
+or delete the TabGroups folder from your project's Plugins folder.
