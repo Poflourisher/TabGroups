@@ -36,7 +36,12 @@ void STabGroupChip::Construct(const FArguments&, const FGuid& InGroupId)
 			SNew(STextBlock)
 			.Text(this, &STabGroupChip::GetLabel)
 			.Font(FCoreStyle::GetDefaultFontStyle("Bold", 9))
-			.ColorAndOpacity(FSlateColor(TabGroups::GetChipTextColor()))
+			.ColorAndOpacity_Lambda([this]()
+			{
+				const FTabGroupsManager* Manager = FTabGroupsManager::Get();
+				const TSharedPtr<FTabGroup> Group = Manager ? Manager->FindGroup(GroupId) : nullptr;
+				return FSlateColor(TabGroups::GetChipTextColorFor(Group.IsValid() ? TabGroups::GetGroupDisplayColor(Group->Color, Group->CustomColor) : TabGroups::GetGroupColor(0)));
+			})
 		]
 	];
 }
@@ -87,7 +92,7 @@ FSlateColor STabGroupChip::GetBackground() const
 {
 	const FTabGroupsManager* Manager = FTabGroupsManager::Get();
 	const TSharedPtr<FTabGroup> Group = Manager ? Manager->FindGroup(GroupId) : nullptr;
-	FLinearColor Color = TabGroups::GetGroupColor(Group.IsValid() ? Group->Color : 0);
+	FLinearColor Color = Group.IsValid() ? TabGroups::GetGroupDisplayColor(Group->Color, Group->CustomColor) : TabGroups::GetGroupColor(0);
 	if (IsHovered())
 	{
 		Color = FLinearColor::LerpUsingHSV(Color, FLinearColor::White, 0.2f);
@@ -218,7 +223,7 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 			Geometry.ToPaintGeometry(FVector2f(Line.Width, UnderlineThickness), FSlateLayoutTransform(FVector2f(Position))),
 			White,
 			ESlateDrawEffect::None,
-			TabGroups::GetGroupColor(State->Groups[Line.Group]->Color));
+			TabGroups::GetGroupDisplayColor(State->Groups[Line.Group]->Color, State->Groups[Line.Group]->CustomColor));
 	}
 	return MaxLayer;
 }

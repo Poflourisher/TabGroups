@@ -21,6 +21,8 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "TabGroupsManager.h"
 #include "TabGroupsSettings.h"
+#include "TabGroupsState.h"
+#include "ToolMenus.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/SWindow.h"
 #include "Widgets/Text/STextBlock.h"
@@ -364,7 +366,7 @@ namespace
 				Shot(TEXT("08_tab_menu_content"), Preview);
 				Preview->RequestDestroyWindow();
 				const TSharedPtr<FTabGroup> Group = GroupNamed(TEXT("Materials"));
-				Preview = SNew(SWindow).ClientSize(FVector2D(280, 150)).Title(FText::FromString(TEXT("Editor preview")))[Manager().MakeGroupEditorWidget(Group->Id)];
+				Preview = SNew(SWindow).ClientSize(FVector2D(360, 150)).Title(FText::FromString(TEXT("Editor preview")))[Manager().MakeGroupEditorWidget(Group->Id)];
 				FSlateApplication::Get().AddWindow(Preview.ToSharedRef());
 			});
 			Add(1.f, [this]()
@@ -373,6 +375,65 @@ namespace
 				Preview->RequestDestroyWindow();
 				Preview.Reset();
 			});
+
+			// Colour wheel: a custom colour replaces the palette colour and survives saving.
+			Add(0.5f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Materials = GroupNamed(TEXT("Materials"));
+				Manager().SetGroupCustomColor(Materials->Id, FLinearColor(FColor(0x12, 0xAB, 0x9F)));
+				Check(TEXT("custom colour stored"), Materials->CustomColor == TEXT("12AB9F"));
+			});
+			Add(1.f, [this]() { Shot(TEXT("09b_custom_colour")); });
+
+			// Close group keeps it in the menu; reopening brings the assets back as the same group.
+			Add(0.5f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Meshes = GroupNamed(TEXT("Meshes"));
+				ClosedId = Meshes->Id.ToString();
+				Manager().CloseGroup(Meshes->Id);
+			});
+			Add(1.5f, [this]()
+			{
+				Check(TEXT("closed group is gone from the bar"), !GroupNamed(TEXT("Meshes")).IsValid());
+				Check(TEXT("closed group tabs closed"), !AssetTab(3).IsValid() && !AssetTab(4).IsValid() && !AssetTab(5).IsValid());
+				const TArray<TabGroups::FSavedGroup>& Closed = Manager().GetClosedGroups();
+				Check(TEXT("closed group listed"), Closed.Num() > 0 && Closed[0].Name == TEXT("Meshes") && Closed[0].Members.Num() == 3);
+				Preview = SNew(SWindow).ClientSize(FVector2D(320, 260)).Title(FText::FromString(TEXT("Tab Groups menu")))[Manager().MakeTabGroupsMenuWidget()];
+				FSlateApplication::Get().AddWindow(Preview.ToSharedRef());
+			});
+			Add(1.f, [this]()
+			{
+				Shot(TEXT("09c_tab_groups_menu"), Preview);
+				Preview->RequestDestroyWindow();
+				Preview.Reset();
+				Manager().ReopenClosedGroup(ClosedId);
+			});
+			Add(5.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Meshes = GroupNamed(TEXT("Meshes"));
+				Check(TEXT("reopened group is back with its tabs"), Meshes.IsValid() && Meshes->Tabs.Num() == 3);
+				Check(TEXT("reopened group keeps its colour"), Meshes.IsValid() && Meshes->Color == 8);
+				Check(TEXT("reopened group leaves the closed list"), !Manager().GetClosedGroups().ContainsByPredicate([this](const TabGroups::FSavedGroup& Saved) { return Saved.Id == ClosedId; }));
+				if (Meshes.IsValid())
+				{
+					Manager().SetCollapsed(Meshes->Id, true); // The rest of the test expects it collapsed.
+				}
+				Shot(TEXT("09d_reopened"));
+			});
+
+			// Delete group closes the tabs and keeps nothing.
+			Add(0.5f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Temp = Manager().CreateGroup(AssetTab(9).ToSharedRef(), TEXT("Temp"), 1, false);
+				Manager().DeleteGroup(Temp->Id);
+			});
+			Add(1.f, [this]()
+			{
+				Check(TEXT("deleted group tab closed"), !AssetTab(9).IsValid());
+				Check(TEXT("deleted group not kept"), !Manager().GetClosedGroups().ContainsByPredicate([](const TabGroups::FSavedGroup& Saved) { return Saved.Name == TEXT("Temp"); }));
+				OpenAsset(9);
+			});
+			Add(2.f, [this]() { Check(TEXT("top menu entry registered"), UToolMenus::Get()->FindMenu("MainFrame.MainMenu") != nullptr); });
 
 			// Workspaces.
 			Add(0.5f, [this]() { Manager().SaveWorkspace(TEXT("Everything")); });
@@ -415,6 +476,7 @@ namespace
 				Check(TEXT("restart: expanded group restored"), Materials.IsValid());
 				Check(TEXT("restart: expanded group has its tabs"), Materials.IsValid() && Materials->Tabs.Num() == 3);
 				Check(TEXT("restart: colour kept"), Materials.IsValid() && Materials->Color == 4);
+				Check(TEXT("restart: custom colour kept"), Materials.IsValid() && Materials->CustomColor == TEXT("12AB9F"));
 				const TSharedPtr<FTabGroup> Meshes = GroupNamed(TEXT("Meshes"));
 				Check(TEXT("restart: collapsed group restored lazily"), Meshes.IsValid() && Meshes->bCollapsed && Meshes->UnopenedKeys.Num() == 3);
 				const TSharedPtr<SDockTab> PinnedTab = AssetTab(2);
@@ -676,6 +738,7 @@ namespace
 		FVector2D DragTo = FVector2D::ZeroVector;
 		TArray<TSharedPtr<SDockTab>> Panels;
 		TSharedPtr<SWindow> Preview;
+		FString ClosedId;
 	};
 
 	TSharedPtr<FSelfTest> GSelfTest;

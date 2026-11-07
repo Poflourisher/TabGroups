@@ -6,6 +6,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Policies/PrettyJsonPrintPolicy.h"
+#include "Algo/AllOf.h"
 
 namespace TabGroups
 {
@@ -41,50 +42,72 @@ namespace TabGroups
 			return Out;
 		}
 
-		TSharedRef<FJsonObject> LayoutToJson(const FSavedLayout& Layout)
+		TArray<TSharedPtr<FJsonValue>> GroupsToJson(const TArray<FSavedGroup>& Groups)
 		{
-			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
-			TArray<TSharedPtr<FJsonValue>> Groups;
-			for (const FSavedGroup& Group : Layout.Groups)
+			TArray<TSharedPtr<FJsonValue>> Out;
+			for (const FSavedGroup& Group : Groups)
 			{
 				TSharedRef<FJsonObject> GroupObject = MakeShared<FJsonObject>();
 				GroupObject->SetStringField(TEXT("id"), Group.Id);
 				GroupObject->SetStringField(TEXT("name"), Group.Name);
 				GroupObject->SetNumberField(TEXT("color"), Group.Color);
+				if (!Group.CustomColor.IsEmpty())
+				{
+					GroupObject->SetStringField(TEXT("customColor"), Group.CustomColor);
+				}
 				GroupObject->SetBoolField(TEXT("collapsed"), Group.bCollapsed);
 				GroupObject->SetArrayField(TEXT("members"), ToJsonStrings(Group.Members));
-				Groups.Add(MakeShared<FJsonValueObject>(GroupObject));
+				Out.Add(MakeShared<FJsonValueObject>(GroupObject));
 			}
-			Object->SetArrayField(TEXT("groups"), Groups);
+			return Out;
+		}
+
+		void GroupsFromJson(const TSharedPtr<FJsonObject>& Object, const TCHAR* Field, TArray<FSavedGroup>& Out)
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Groups = nullptr;
+			if (!Object->TryGetArrayField(Field, Groups))
+			{
+				return;
+			}
+			for (const TSharedPtr<FJsonValue>& Value : *Groups)
+			{
+				const TSharedPtr<FJsonObject>* GroupObject = nullptr;
+				if (!Value.IsValid() || !Value->TryGetObject(GroupObject))
+				{
+					continue;
+				}
+				FSavedGroup Group;
+				(*GroupObject)->TryGetStringField(TEXT("id"), Group.Id);
+				(*GroupObject)->TryGetStringField(TEXT("name"), Group.Name);
+				(*GroupObject)->TryGetNumberField(TEXT("color"), Group.Color);
+				(*GroupObject)->TryGetStringField(TEXT("customColor"), Group.CustomColor);
+				(*GroupObject)->TryGetBoolField(TEXT("collapsed"), Group.bCollapsed);
+				Group.Color = FMath::Clamp(Group.Color, 0, NumGroupColors - 1);
+				const bool bValidCustomColor = Group.CustomColor.Len() == 6
+					&& Algo::AllOf(Group.CustomColor, [](TCHAR Character) { return FChar::IsHexDigit(Character); });
+				if (!bValidCustomColor)
+				{
+					Group.CustomColor.Reset();
+				}
+				Group.Members = FromJsonStrings(*GroupObject, TEXT("members"));
+				if (Group.Members.Num() > 0)
+				{
+					Out.Add(MoveTemp(Group));
+				}
+			}
+		}
+
+		TSharedRef<FJsonObject> LayoutToJson(const FSavedLayout& Layout)
+		{
+			TSharedRef<FJsonObject> Object = MakeShared<FJsonObject>();
+			Object->SetArrayField(TEXT("groups"), GroupsToJson(Layout.Groups));
 			Object->SetArrayField(TEXT("pinned"), ToJsonStrings(Layout.Pinned));
 			return Object;
 		}
 
 		void LayoutFromJson(const TSharedPtr<FJsonObject>& Object, FSavedLayout& Out)
 		{
-			const TArray<TSharedPtr<FJsonValue>>* Groups = nullptr;
-			if (Object->TryGetArrayField(TEXT("groups"), Groups))
-			{
-				for (const TSharedPtr<FJsonValue>& Value : *Groups)
-				{
-					const TSharedPtr<FJsonObject>* GroupObject = nullptr;
-					if (!Value.IsValid() || !Value->TryGetObject(GroupObject))
-					{
-						continue;
-					}
-					FSavedGroup Group;
-					(*GroupObject)->TryGetStringField(TEXT("id"), Group.Id);
-					(*GroupObject)->TryGetStringField(TEXT("name"), Group.Name);
-					(*GroupObject)->TryGetNumberField(TEXT("color"), Group.Color);
-					(*GroupObject)->TryGetBoolField(TEXT("collapsed"), Group.bCollapsed);
-					Group.Color = FMath::Clamp(Group.Color, 0, NumGroupColors - 1);
-					Group.Members = FromJsonStrings(*GroupObject, TEXT("members"));
-					if (Group.Members.Num() > 0)
-					{
-						Out.Groups.Add(MoveTemp(Group));
-					}
-				}
-			}
+			GroupsFromJson(Object, TEXT("groups"), Out.Groups);
 			Out.Pinned = FromJsonStrings(Object, TEXT("pinned"));
 		}
 	}
@@ -94,6 +117,7 @@ namespace TabGroups
 		TSharedRef<FJsonObject> Root = LayoutToJson(State.Layout);
 		Root->SetNumberField(TEXT("version"), StateVersion);
 		Root->SetStringField(TEXT("activeWorkspace"), State.ActiveWorkspace);
+		Root->SetArrayField(TEXT("closedGroups"), GroupsToJson(State.ClosedGroups));
 
 		TArray<TSharedPtr<FJsonValue>> Workspaces;
 		for (const FSavedWorkspace& Workspace : State.Workspaces)
@@ -124,6 +148,7 @@ namespace TabGroups
 
 		LayoutFromJson(Root, OutState.Layout);
 		Root->TryGetStringField(TEXT("activeWorkspace"), OutState.ActiveWorkspace);
+		GroupsFromJson(Root, TEXT("closedGroups"), OutState.ClosedGroups);
 
 		const TArray<TSharedPtr<FJsonValue>>* Workspaces = nullptr;
 		if (Root->TryGetArrayField(TEXT("workspaces"), Workspaces))

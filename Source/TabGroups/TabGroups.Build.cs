@@ -21,6 +21,8 @@ public class TabGroups : ModuleRules
 			"UnrealEd",
 			"MainFrame",
 			"AssetRegistry",
+			"Settings",
+			"AppFramework", // colour picker
 		});
 
 		// SDockingTabWell lives in Slate's private folder. Only its class layout is used here:

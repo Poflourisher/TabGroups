@@ -260,6 +260,10 @@ bool FStateRoundTrips::RunTest(const FString&)
 	Workspace.Assets = { TEXT("/Game/M_Rock.M_Rock") };
 	State.Workspaces.Add(Workspace);
 	State.ActiveWorkspace = TEXT("VFX");
+	FSavedGroup Closed = Group;
+	Closed.Id = TEXT("g2");
+	Closed.CustomColor = TEXT("12AB9F");
+	State.ClosedGroups.Add(Closed);
 
 	FSavedState Loaded;
 	TestTrue(TEXT("parsed"), DeserializeState(SerializeState(State), Loaded));
@@ -272,6 +276,9 @@ bool FStateRoundTrips::RunTest(const FString&)
 	TestEqual(TEXT("workspace"), Loaded.Workspaces[0].Name, FString(TEXT("VFX")));
 	TestEqual(TEXT("workspace assets"), Loaded.Workspaces[0].Assets.Num(), 1);
 	TestEqual(TEXT("active"), Loaded.ActiveWorkspace, FString(TEXT("VFX")));
+	TestEqual(TEXT("closed groups"), Loaded.ClosedGroups.Num(), 1);
+	TestEqual(TEXT("custom colour"), Loaded.ClosedGroups[0].CustomColor, FString(TEXT("12AB9F")));
+	TestTrue(TEXT("palette groups have no custom colour"), Loaded.Layout.Groups[0].CustomColor.IsEmpty());
 	return true;
 }
 
@@ -285,5 +292,8 @@ bool FStateSurvivesBadInput::RunTest(const FString&)
 	TestTrue(TEXT("repairable"), DeserializeState(TEXT("{\"groups\":[{\"name\":\"A\",\"color\":99,\"members\":[\"x\"]},{\"name\":\"NoMembers\"}]}"), Loaded));
 	TestEqual(TEXT("empty group dropped"), Loaded.Layout.Groups.Num(), 1);
 	TestEqual(TEXT("colour clamped"), Loaded.Layout.Groups[0].Color, NumGroupColors - 1);
+
+	TestTrue(TEXT("bad custom colour"), DeserializeState(TEXT("{\"groups\":[{\"name\":\"A\",\"customColor\":\"nothex\",\"members\":[\"x\"]}]}"), Loaded));
+	TestTrue(TEXT("bad custom colour dropped"), Loaded.Layout.Groups[0].CustomColor.IsEmpty());
 	return true;
 }

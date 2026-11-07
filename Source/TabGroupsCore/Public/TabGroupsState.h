@@ -14,6 +14,8 @@ namespace TabGroups
 		FString Id;
 		FString Name;
 		int32 Color = 0;
+		/** Colour picked on the colour wheel as hex RRGGBB; empty means Color (a Chrome palette index) is used. */
+		FString CustomColor;
 		bool bCollapsed = false;
 		/** Stable tab keys in tab order. */
 		TArray<FString> Members;
@@ -36,6 +38,8 @@ namespace TabGroups
 	struct FSavedState
 	{
 		FSavedLayout Layout;
+		/** Groups closed with Close group, kept so they can be reopened from the Tab Groups menu. */
+		TArray<FSavedGroup> ClosedGroups;
 		TArray<FSavedWorkspace> Workspaces;
 		FString ActiveWorkspace;
 	};

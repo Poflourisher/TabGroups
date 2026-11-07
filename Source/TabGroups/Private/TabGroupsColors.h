@@ -25,9 +25,27 @@ namespace TabGroups
 		return FText::FromString(Names[FMath::Clamp(Index, 0, NumGroupColors - 1)]);
 	}
 
-	/** Dark text that reads on every group colour. */
+	/** Dark text that reads on every palette colour. */
 	inline FLinearColor GetChipTextColor()
 	{
 		return FLinearColor(FColor(0x20, 0x21, 0x24));
+	}
+
+	/** A group's colour: the colour-wheel pick (hex RRGGBB) when there is one, else the palette entry. */
+	inline FLinearColor GetGroupDisplayColor(int32 PaletteIndex, const FString& CustomColor)
+	{
+		return CustomColor.Len() == 6 ? FLinearColor(FColor::FromHex(CustomColor)) : GetGroupColor(PaletteIndex);
+	}
+
+	/** Dark text on light colours, white text on dark ones (colour-wheel picks can be either). */
+	inline FLinearColor GetChipTextColorFor(const FLinearColor& Background)
+	{
+		const float Luminance = 0.2126f * Background.R + 0.7152f * Background.G + 0.0722f * Background.B;
+		return Luminance > 0.18f ? GetChipTextColor() : FLinearColor(FColor(0xF1, 0xF3, 0xF4));
+	}
+
+	inline FString ToHexColor(const FLinearColor& Color)
+	{
+		return Color.ToFColor(true).ToHex().Left(6);
 	}
 }

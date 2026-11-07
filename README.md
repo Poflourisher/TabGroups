@@ -21,12 +21,13 @@ To add more tabs, right-click them and choose **Add tab to group**, or drag a ta
 If you open an asset whose tab is in a collapsed group, the group expands by itself.
 
 ### Rename, recolour, ungroup
-**Right-click the chip.**
+**Right-click the chip.** Pick one of Chrome's nine colours, or click **+** for the colour wheel to choose any colour. Text on the chip switches between dark and light so it stays readable.
 
 | Button | What it does |
 |---|---|
 | **Ungroup** | Keeps the tabs open and removes the group |
-| **Close group** | Closes every tab in the group |
+| **Close group** | Closes the tabs but keeps the group in the **Tab Groups** menu, so you can reopen it later |
+| **Delete group** | Closes the tabs and forgets the group |
 
 ### Take a tab out
 Drag it out of the group, or right-click it and choose **Remove from group**.
@@ -34,10 +35,24 @@ Drag it out of the group, or right-click it and choose **Remove from group**.
 ### Pin a tab
 Right-click a tab and choose **Pin tab**. It shrinks to an icon at the left of the bar, and **Close All** and **Close Others** skip it.
 
+### The Tab Groups menu
+The **Tab Groups** menu in the top menu bar, next to Help, is like Brave's tab groups button:
+
+| Item | What it does |
+|---|---|
+| **Create new tab group** | Starts a group with the tab you last clicked |
+| **Open groups** | Click one to expand it and jump to its tabs |
+| **Closed groups** | Click one to reopen it with all its assets |
+| **Delete a closed group** | Removes a closed group from the list for good |
+| **Workspaces** | See below |
+| **Settings...** | Opens the plugin's settings |
+
+Only asset tabs can be reopened, such as Materials, Blueprints and Niagara systems. A closed group made only of panels like Details isn't kept, because there would be nothing to reopen.
+
 ### Workspaces
 Save a whole set of asset tabs and their groups under a name, then switch between sets.
 
-Go to **Window > Tab workspaces**, type a name and press Enter. Switching closes the open asset tabs and opens the other set. Unsaved assets stay unsaved in memory, and the workspace you're leaving is saved first.
+Go to **Tab Groups > Workspaces** in the top menu, type a name and press Enter. Switching closes the open asset tabs and opens the other set. Unsaved assets stay unsaved in memory, and the workspace you're leaving is saved first.
 
 Workspaces cover asset tabs on the main tab bar. For panels like Details, use **Window > Save Layout**.
 

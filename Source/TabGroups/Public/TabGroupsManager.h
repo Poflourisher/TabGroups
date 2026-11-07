@@ -21,6 +21,8 @@ struct FTabGroup
 	FGuid Id;
 	FString Name;
 	int32 Color = 0;
+	/** Colour from the colour wheel as hex RRGGBB; empty means the palette Color is used. */
+	FString CustomColor;
 	bool bCollapsed = false;
 	TArray<TWeakPtr<SDockTab>> Tabs;
 	/** Saved members with no open tab yet; opened when the group expands. */
@@ -71,8 +73,25 @@ public:
 	bool SetCollapsed(const FGuid& GroupId, bool bCollapsed);
 	void SetGroupName(const FGuid& GroupId, const FString& Name);
 	void SetGroupColor(const FGuid& GroupId, int32 Color);
+	void SetGroupCustomColor(const FGuid& GroupId, const FLinearColor& Color);
 	void Ungroup(const FGuid& GroupId);
+	/** Closes the tabs but keeps the group, so it can be reopened from the Tab Groups menu. */
 	void CloseGroup(const FGuid& GroupId);
+	/** Closes the tabs and forgets the group. */
+	void DeleteGroup(const FGuid& GroupId);
+	/** Expands the group and brings its first tab forward. */
+	void FocusGroup(const FGuid& GroupId);
+	/** Starts a group with the active tab, as the Tab Groups menu does. */
+	void CreateGroupFromActiveTab();
+
+	// Closed groups
+	const TArray<TabGroups::FSavedGroup>& GetClosedGroups() const { return ClosedGroups; }
+	void ReopenClosedGroup(const FString& SavedId);
+	void ForgetClosedGroup(const FString& SavedId);
+
+	/** Contents of the Tab Groups menu in the top menu bar. */
+	void FillTabGroupsMenu(FMenuBuilder& MenuBuilder);
+	TSharedRef<SWidget> MakeTabGroupsMenuWidget();
 	void OpenGroupEditor(const FGuid& GroupId);
 	TSharedRef<SWidget> MakeGroupEditorWidget(const FGuid& GroupId);
 	/** Screen position of a point on a group chip; Fraction runs 0-1 across the chip and its row. */
@@ -146,6 +165,8 @@ private:
 	void ReopenPendingAssets();
 	TSharedPtr<FTabWellState> FindRootWell();
 	void RegisterMenus();
+	static void FillWorkspacesMenu(FMenuBuilder& MenuBuilder);
+	TabGroups::FSavedGroup MakeSavedGroup(const FTabWellState& State, const FTabGroup& Group);
 
 	TMap<const void*, TSharedRef<FTabWellState>> Wells;
 	TMap<const SDockTab*, TWeakPtr<SDockTab>> Pinned;
@@ -155,6 +176,8 @@ private:
 	/** Saved groups and pins waiting for their tabs to appear. */
 	TabGroups::FSavedLayout Pending;
 	TArray<TabGroups::FSavedWorkspace> Workspaces;
+	/** Most recently closed first. */
+	TArray<TabGroups::FSavedGroup> ClosedGroups;
 	FString ActiveWorkspace;
 
 	TSet<FGuid> PendingExpand;

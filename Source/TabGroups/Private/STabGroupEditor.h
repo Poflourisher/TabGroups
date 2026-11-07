@@ -20,6 +20,7 @@ public:
 
 private:
 	TSharedRef<SWidget> MakeSwatch(int32 ColorIndex);
+	TSharedRef<SWidget> MakeCustomSwatch();
 
 	FGuid GroupId;
 	TSharedPtr<SEditableTextBox> NameBox;

@@ -31,6 +31,14 @@
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/SOverlay.h"
+#include "Brushes/SlateRoundedBoxBrush.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "ISettingsModule.h"
+#include "Widgets/Images/SImage.h"
+#include "Widgets/Layout/SBox.h"
+#include "Widgets/Notifications/SNotificationList.h"
+#include "Widgets/SBoxPanel.h"
+#include "Widgets/Text/STextBlock.h"
 
 #define LOCTEXT_NAMESPACE "TabGroups"
 
@@ -44,6 +52,7 @@ namespace
 	constexpr double SaveDelaySeconds = 1.0;
 	constexpr double ReopenDelaySeconds = 3.0;
 	constexpr double MenuUnlockDelaySeconds = 0.25;
+	constexpr int32 MaxClosedGroups = 30;
 	constexpr float NamelessChipWidth = 18.f;
 	constexpr float ChipHorizontalPadding = 18.f;
 	const TCHAR* const AssetPrefix = TEXT("asset:");
@@ -666,6 +675,7 @@ void FTabGroupsManager::RestorePendingInto(FTabWellState& State)
 				Group->Id = ParseGuid(SavedGroup.Id);
 				Group->Name = SavedGroup.Name;
 				Group->Color = SavedGroup.Color;
+				Group->CustomColor = SavedGroup.CustomColor;
 				Group->bCollapsed = SavedGroup.bCollapsed;
 				Group->SavedOrder = SavedGroup.Members;
 				Group->UnopenedKeys = SavedGroup.Members;
@@ -1041,6 +1051,16 @@ void FTabGroupsManager::SetGroupColor(const FGuid& GroupId, int32 Color)
 	if (const TSharedPtr<FTabGroup> Group = FindGroup(GroupId))
 	{
 		Group->Color = FMath::Clamp(Color, 0, NumGroupColors - 1);
+		Group->CustomColor.Reset();
+		MarkChanged(FindStateOfGroup(GroupId).Get());
+	}
+}
+
+void FTabGroupsManager::SetGroupCustomColor(const FGuid& GroupId, const FLinearColor& Color)
+{
+	if (const TSharedPtr<FTabGroup> Group = FindGroup(GroupId))
+	{
+		Group->CustomColor = ToHexColor(Color);
 		MarkChanged(FindStateOfGroup(GroupId).Get());
 	}
 }
@@ -1055,6 +1075,33 @@ void FTabGroupsManager::Ungroup(const FGuid& GroupId)
 }
 
 void FTabGroupsManager::CloseGroup(const FGuid& GroupId)
+{
+	const TSharedPtr<FTabGroup> Group = FindGroup(GroupId);
+	const TSharedPtr<FTabWellState> State = FindStateOfGroup(GroupId);
+	if (!Group.IsValid() || !State.IsValid())
+	{
+		return;
+	}
+
+	// Like Brave: the group goes to the Tab Groups menu. Only asset tabs can be opened again,
+	// so a group of panels alone is not kept (it would reopen as nothing).
+	RebuildAssetMap();
+	FSavedGroup Saved = MakeSavedGroup(*State, *Group);
+	Saved.bCollapsed = false;
+	const bool bReopenable = Saved.Members.ContainsByPredicate([](const FString& Key) { return Key.StartsWith(AssetPrefix) && !Key.Contains(TEXT(">")); });
+	if (bReopenable)
+	{
+		ClosedGroups.RemoveAll([&Saved](const FSavedGroup& Existing) { return Existing.Id == Saved.Id; });
+		ClosedGroups.Insert(MoveTemp(Saved), 0);
+		if (ClosedGroups.Num() > MaxClosedGroups)
+		{
+			ClosedGroups.SetNum(MaxClosedGroups);
+		}
+	}
+	DeleteGroup(GroupId);
+}
+
+void FTabGroupsManager::DeleteGroup(const FGuid& GroupId)
 {
 	const TSharedPtr<FTabGroup> Group = FindGroup(GroupId);
 	if (!Group.IsValid())
@@ -1255,7 +1302,7 @@ void FTabGroupsManager::FillTabContextMenu(FMenuBuilder& MenuBuilder, TWeakPtr<S
 		{
 			if (Group != OwnGroup)
 			{
-				Others.Add({ Group->Id, Group->Name.IsEmpty() ? FText::Format(LOCTEXT("UnnamedColor", "{0} group"), GetGroupColorName(Group->Color)) : FText::FromString(Group->Name) });
+				Others.Add({ Group->Id, Group->Name.IsEmpty() ? (Group->CustomColor.IsEmpty() ? FText::Format(LOCTEXT("UnnamedColor", "{0} group"), GetGroupColorName(Group->Color)) : LOCTEXT("UnnamedCustom", "Custom colour group")) : FText::FromString(Group->Name) });
 			}
 		}
 	}
@@ -1349,6 +1396,29 @@ FString FTabGroupsManager::GetTabKey(const TSharedRef<SDockTab>& Tab)
 	return Key;
 }
 
+FSavedGroup FTabGroupsManager::MakeSavedGroup(const FTabWellState& State, const FTabGroup& Group)
+{
+	FSavedGroup Saved;
+	Saved.Id = Group.Id.ToString();
+	Saved.Name = Group.Name;
+	Saved.Color = Group.Color;
+	Saved.CustomColor = Group.CustomColor;
+	Saved.bCollapsed = Group.bCollapsed;
+	if (const TSharedPtr<SWidget> Well = State.Well.Pin())
+	{
+		const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*AsWell(Well));
+		for (int32 Index = 0; Index < Tabs.Num(); ++Index)
+		{
+			if (ContainsTab(Group, &Tabs[Index].Get()))
+			{
+				Saved.Members.Add(GetTabKey(Tabs[Index]));
+			}
+		}
+	}
+	Saved.Members.Append(Group.UnopenedKeys);
+	return Saved;
+}
+
 FSavedLayout FTabGroupsManager::CaptureLayout()
 {
 	RebuildAssetMap();
@@ -1361,22 +1431,9 @@ FSavedLayout FTabGroupsManager::CaptureLayout()
 		{
 			continue;
 		}
-		const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*AsWell(Well));
 		for (const TSharedRef<FTabGroup>& Group : Pair.Value->Groups)
 		{
-			FSavedGroup Saved;
-			Saved.Id = Group->Id.ToString();
-			Saved.Name = Group->Name;
-			Saved.Color = Group->Color;
-			Saved.bCollapsed = Group->bCollapsed;
-			for (int32 Index = 0; Index < Tabs.Num(); ++Index)
-			{
-				if (ContainsTab(*Group, &Tabs[Index].Get()))
-				{
-					Saved.Members.Add(GetTabKey(Tabs[Index]));
-				}
-			}
-			Saved.Members.Append(Group->UnopenedKeys);
+			FSavedGroup Saved = MakeSavedGroup(*Pair.Value, *Group);
 			if (Saved.Members.Num() > 0)
 			{
 				Layout.Groups.Add(MoveTemp(Saved));
@@ -1429,6 +1486,7 @@ void FTabGroupsManager::SaveNow()
 		State.Layout = CaptureLayout();
 	}
 	State.Workspaces = Workspaces;
+	State.ClosedGroups = ClosedGroups;
 	State.ActiveWorkspace = ActiveWorkspace;
 
 	const FString Path = GetStatePath();
@@ -1453,6 +1511,7 @@ void FTabGroupsManager::LoadState()
 		return;
 	}
 	Workspaces = MoveTemp(State.Workspaces);
+	ClosedGroups = MoveTemp(State.ClosedGroups);
 	ActiveWorkspace = MoveTemp(State.ActiveWorkspace);
 	if (GetDefault<UTabGroupsSettings>()->bRememberGroups)
 	{
@@ -1542,6 +1601,7 @@ void FTabGroupsManager::ReopenPendingAssets()
 			Group->Id = ParseGuid(Saved.Id);
 			Group->Name = Saved.Name;
 			Group->Color = Saved.Color;
+			Group->CustomColor = Saved.CustomColor;
 			Group->bCollapsed = true;
 			Group->SavedOrder = Saved.Members;
 			Group->UnopenedKeys = Saved.Members;
@@ -1669,98 +1729,321 @@ void FTabGroupsManager::DeleteWorkspace(const FString& Name)
 	LastChangeTime = FPlatformTime::Seconds();
 }
 
-void FTabGroupsManager::RegisterMenus()
+// ---------------------------------------------------------------------------
+// Closed groups and the Tab Groups menu
+// ---------------------------------------------------------------------------
+
+void FTabGroupsManager::ReopenClosedGroup(const FString& SavedId)
 {
-	FToolMenuOwnerScoped OwnerScoped(this);
-	UToolMenu* Menu = UToolMenus::Get()->ExtendMenu("LevelEditor.MainMenu.Window");
-	if (!Menu)
+	const int32 Index = ClosedGroups.IndexOfByPredicate([&SavedId](const FSavedGroup& Saved) { return Saved.Id == SavedId; });
+	if (Index == INDEX_NONE)
 	{
 		return;
 	}
-	FToolMenuSection& Section = Menu->FindOrAddSection("TabGroups", LOCTEXT("WindowSection", "Tab groups"));
-	Section.AddSubMenu(
-		"TabGroupsWorkspaces",
-		LOCTEXT("Workspaces", "Tab workspaces"),
-		LOCTEXT("WorkspacesTip", "Save the open asset tabs and their groups under a name, and switch between saved sets"),
-		FNewToolMenuChoice(FNewMenuDelegate::CreateLambda([](FMenuBuilder& MenuBuilder)
-		{
-			FTabGroupsManager* Manager = FTabGroupsManager::Get();
-			if (!Manager)
-			{
-				return;
-			}
+	FSavedGroup Saved = ClosedGroups[Index];
+	ClosedGroups.RemoveAt(Index);
+	Saved.bCollapsed = false;
 
-			MenuBuilder.BeginSection("Save", LOCTEXT("SaveSection", "Save current tabs as"));
-			MenuBuilder.AddWidget(
-				SNew(SEditableTextBox)
-				.MinDesiredWidth(180.f)
-				.HintText(LOCTEXT("WorkspaceHint", "Workspace name, then Enter"))
-				.OnTextCommitted_Lambda([](const FText& Text, ETextCommit::Type Commit)
+	// The same path as a restart: the group waits in Pending and forms as its assets open.
+	Pending.Groups.Add(Saved);
+	OpenAssetKeys(Saved.Members);
+	MarkAllWellsDirty();
+	bSaveQueued = true;
+	LastChangeTime = FPlatformTime::Seconds();
+}
+
+void FTabGroupsManager::ForgetClosedGroup(const FString& SavedId)
+{
+	ClosedGroups.RemoveAll([&SavedId](const FSavedGroup& Saved) { return Saved.Id == SavedId; });
+	bSaveQueued = true;
+	LastChangeTime = FPlatformTime::Seconds();
+}
+
+void FTabGroupsManager::FocusGroup(const FGuid& GroupId)
+{
+	const TSharedPtr<FTabGroup> Group = FindGroup(GroupId);
+	if (!Group.IsValid())
+	{
+		return;
+	}
+	SetCollapsed(GroupId, false);
+	for (const TWeakPtr<SDockTab>& Weak : Group->Tabs)
+	{
+		if (const TSharedPtr<SDockTab> Tab = Weak.Pin())
+		{
+			Tab->ActivateInParent(ETabActivationCause::SetDirectly);
+			if (const TSharedPtr<SWindow> Window = Tab->GetParentWindow())
+			{
+				Window->BringToFront();
+			}
+			return;
+		}
+	}
+}
+
+void FTabGroupsManager::CreateGroupFromActiveTab()
+{
+	const TSharedPtr<SDockTab> Active = FGlobalTabmanager::Get()->GetActiveTab();
+	if (Active.IsValid() && CanGroupOrPin(Active.ToSharedRef()))
+	{
+		CreateGroup(Active.ToSharedRef());
+	}
+	else
+	{
+		FNotificationInfo Info(LOCTEXT("NoActiveTab", "Click a tab first. The Home and Level Editor tabs can't be grouped."));
+		Info.ExpireDuration = 4.f;
+		FSlateNotificationManager::Get().AddNotification(Info);
+	}
+}
+
+namespace
+{
+	const FSlateBrush* DotBrush()
+	{
+		static const FSlateRoundedBoxBrush Brush(FLinearColor::White, 5.f);
+		return &Brush;
+	}
+
+	/** A menu row with the group's colour dot, like Brave's Tab groups menu. */
+	TSharedRef<SWidget> MakeGroupRow(const FLinearColor& Color, const FText& Label)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0.f, 0.f, 8.f, 0.f)
+			[
+				SNew(SBox)
+				.WidthOverride(10.f)
+				.HeightOverride(10.f)
+				[
+					SNew(SImage)
+					.Image(DotBrush())
+					.ColorAndOpacity(Color)
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.f)
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock).Text(Label)
+			];
+	}
+
+	FText GroupLabel(const FString& Name, int32 Count)
+	{
+		const FText Shown = Name.IsEmpty() ? LOCTEXT("UnnamedGroupLabel", "Unnamed group") : FText::FromString(Name);
+		return FText::Format(LOCTEXT("GroupLabelCount", "{0}  ({1})"), Shown, Count);
+	}
+}
+
+void FTabGroupsManager::FillTabGroupsMenu(FMenuBuilder& MenuBuilder)
+{
+	MenuBuilder.BeginSection("TabGroupsCreate");
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("CreateGroup", "Create new tab group"),
+		LOCTEXT("CreateGroupTip", "Start a group with the tab you last clicked"),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]()
+		{
+			if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+			{
+				Manager->CreateGroupFromActiveTab();
+			}
+		})));
+	MenuBuilder.EndSection();
+
+	const TArray<TSharedRef<FTabGroup>> Open = GetAllGroups();
+	if (Open.Num() > 0)
+	{
+		MenuBuilder.BeginSection("TabGroupsOpen", LOCTEXT("OpenGroupsSection", "Open groups"));
+		for (const TSharedRef<FTabGroup>& Group : Open)
+		{
+			const FGuid Id = Group->Id;
+			MenuBuilder.AddMenuEntry(
+				FUIAction(FExecuteAction::CreateLambda([Id]()
 				{
-					if (Commit == ETextCommit::OnEnter && !Text.IsEmptyOrWhitespace())
+					if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+					{
+						Manager->FocusGroup(Id);
+					}
+				})),
+				MakeGroupRow(GetGroupDisplayColor(Group->Color, Group->CustomColor), GroupLabel(Group->Name, Group->Tabs.Num() + Group->UnopenedKeys.Num())),
+				NAME_None,
+				LOCTEXT("FocusGroupTip", "Show this group's tabs"));
+		}
+		MenuBuilder.EndSection();
+	}
+
+	if (ClosedGroups.Num() > 0)
+	{
+		MenuBuilder.BeginSection("TabGroupsClosed", LOCTEXT("ClosedGroupsSection", "Closed groups"));
+		for (const FSavedGroup& Saved : ClosedGroups)
+		{
+			const FString Id = Saved.Id;
+			MenuBuilder.AddMenuEntry(
+				FUIAction(FExecuteAction::CreateLambda([Id]()
+				{
+					if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+					{
+						Manager->ReopenClosedGroup(Id);
+					}
+				})),
+				MakeGroupRow(GetGroupDisplayColor(Saved.Color, Saved.CustomColor), GroupLabel(Saved.Name, Saved.Members.Num())),
+				NAME_None,
+				LOCTEXT("ReopenGroupTip", "Reopen this group and its assets"));
+		}
+		TArray<TPair<FString, FText>> ToForget;
+		for (const FSavedGroup& Saved : ClosedGroups)
+		{
+			ToForget.Add({ Saved.Id, GroupLabel(Saved.Name, Saved.Members.Num()) });
+		}
+		MenuBuilder.AddSubMenu(
+			LOCTEXT("ForgetClosedGroup", "Delete a closed group"),
+			LOCTEXT("ForgetClosedGroupTip", "Remove a closed group from this list for good"),
+			FNewMenuDelegate::CreateLambda([ToForget](FMenuBuilder& SubMenu)
+			{
+				for (const TPair<FString, FText>& Entry : ToForget)
+				{
+					const FString Id = Entry.Key;
+					SubMenu.AddMenuEntry(Entry.Value, FText::GetEmpty(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Id]()
+					{
+						if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+						{
+							Manager->ForgetClosedGroup(Id);
+						}
+					})));
+				}
+			}));
+		MenuBuilder.EndSection();
+	}
+
+	MenuBuilder.BeginSection("TabGroupsMore");
+	MenuBuilder.AddSubMenu(
+		LOCTEXT("Workspaces", "Workspaces"),
+		LOCTEXT("WorkspacesTip", "Save the open asset tabs and their groups under a name, and switch between saved sets"),
+		FNewMenuDelegate::CreateStatic(&FTabGroupsManager::FillWorkspacesMenu));
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("OpenSettings", "Settings..."),
+		LOCTEXT("OpenSettingsTip", "Open Tab Groups in Editor Preferences"),
+		FSlateIcon(),
+		FUIAction(FExecuteAction::CreateLambda([]()
+		{
+			FModuleManager::LoadModuleChecked<ISettingsModule>("Settings").ShowViewer("Editor", "Plugins", "TabGroupsSettings");
+		})));
+	MenuBuilder.EndSection();
+}
+
+TSharedRef<SWidget> FTabGroupsManager::MakeTabGroupsMenuWidget()
+{
+	FMenuBuilder MenuBuilder(true, nullptr);
+	FillTabGroupsMenu(MenuBuilder);
+	return MenuBuilder.MakeWidget();
+}
+
+void FTabGroupsManager::FillWorkspacesMenu(FMenuBuilder& MenuBuilder)
+{
+	FTabGroupsManager* Manager = FTabGroupsManager::Get();
+	if (!Manager)
+	{
+		return;
+	}
+
+	MenuBuilder.BeginSection("Save", LOCTEXT("SaveSection", "Save current tabs as"));
+	MenuBuilder.AddWidget(
+		SNew(SEditableTextBox)
+		.MinDesiredWidth(180.f)
+		.HintText(LOCTEXT("WorkspaceHint", "Workspace name, then Enter"))
+		.OnTextCommitted_Lambda([](const FText& Text, ETextCommit::Type Commit)
+		{
+			if (Commit == ETextCommit::OnEnter && !Text.IsEmptyOrWhitespace())
+			{
+				if (FTabGroupsManager* Current = FTabGroupsManager::Get())
+				{
+					Current->SaveWorkspace(Text.ToString().TrimStartAndEnd());
+				}
+				FSlateApplication::Get().DismissAllMenus();
+			}
+		}),
+		FText::GetEmpty());
+	MenuBuilder.EndSection();
+
+	const TArray<FString> Names = Manager->GetWorkspaceNames();
+	if (Names.Num() == 0)
+	{
+		return;
+	}
+
+	MenuBuilder.BeginSection("Switch", LOCTEXT("SwitchSection", "Switch to"));
+	for (const FString& Name : Names)
+	{
+		MenuBuilder.AddMenuEntry(
+			FText::FromString(Name),
+			LOCTEXT("SwitchTip", "Close the open asset tabs and open this workspace's tabs"),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateLambda([Name]()
+				{
+					if (FTabGroupsManager* Current = FTabGroupsManager::Get())
+					{
+						Current->SwitchWorkspace(Name);
+					}
+				}),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateLambda([Name]()
+				{
+					const FTabGroupsManager* Current = FTabGroupsManager::Get();
+					return Current && Current->GetActiveWorkspace() == Name;
+				})),
+			NAME_None,
+			EUserInterfaceActionType::RadioButton);
+	}
+	MenuBuilder.EndSection();
+
+	MenuBuilder.BeginSection("Delete", LOCTEXT("DeleteSection", "Manage"));
+	MenuBuilder.AddSubMenu(
+		LOCTEXT("DeleteWorkspace", "Delete workspace"),
+		LOCTEXT("DeleteWorkspaceTip", "Forget a saved workspace. Open tabs are not affected"),
+		FNewMenuDelegate::CreateLambda([Names](FMenuBuilder& SubMenu)
+		{
+			for (const FString& Name : Names)
+			{
+				SubMenu.AddMenuEntry(FText::FromString(Name), FText::GetEmpty(), FSlateIcon(),
+					FUIAction(FExecuteAction::CreateLambda([Name]()
 					{
 						if (FTabGroupsManager* Current = FTabGroupsManager::Get())
 						{
-							Current->SaveWorkspace(Text.ToString().TrimStartAndEnd());
+							Current->DeleteWorkspace(Name);
 						}
-						FSlateApplication::Get().DismissAllMenus();
-					}
-				}),
-				FText::GetEmpty());
-			MenuBuilder.EndSection();
-
-			const TArray<FString> Names = Manager->GetWorkspaceNames();
-			if (Names.Num() == 0)
-			{
-				return;
+					})));
 			}
+		}));
+	MenuBuilder.EndSection();
+}
 
-			MenuBuilder.BeginSection("Switch", LOCTEXT("SwitchSection", "Switch to"));
-			for (const FString& Name : Names)
+void FTabGroupsManager::RegisterMenus()
+{
+	FToolMenuOwnerScoped OwnerScoped(this);
+	// MainFrame.MainMenu is the parent of every editor window's menu bar, so this shows in asset editors too.
+	UToolMenu* MainMenu = UToolMenus::Get()->ExtendMenu("MainFrame.MainMenu");
+	if (!MainMenu)
+	{
+		return;
+	}
+	FToolMenuSection& Section = MainMenu->FindOrAddSection(NAME_None);
+	FToolMenuEntry& Entry = Section.AddSubMenu(
+		"TabGroups",
+		LOCTEXT("TabGroupsMenu", "Tab Groups"),
+		LOCTEXT("TabGroupsMenuTip", "Open and closed tab groups, workspaces and settings"),
+		FNewToolMenuChoice(FNewMenuDelegate::CreateLambda([](FMenuBuilder& MenuBuilder)
+		{
+			if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
 			{
-				MenuBuilder.AddMenuEntry(
-					FText::FromString(Name),
-					LOCTEXT("SwitchTip", "Close the open asset tabs and open this workspace's tabs"),
-					FSlateIcon(),
-					FUIAction(
-						FExecuteAction::CreateLambda([Name]()
-						{
-							if (FTabGroupsManager* Current = FTabGroupsManager::Get())
-							{
-								Current->SwitchWorkspace(Name);
-							}
-						}),
-						FCanExecuteAction(),
-						FIsActionChecked::CreateLambda([Name]()
-						{
-							const FTabGroupsManager* Current = FTabGroupsManager::Get();
-							return Current && Current->GetActiveWorkspace() == Name;
-						})),
-					NAME_None,
-					EUserInterfaceActionType::RadioButton);
+				Manager->FillTabGroupsMenu(MenuBuilder);
 			}
-			MenuBuilder.EndSection();
-
-			MenuBuilder.BeginSection("Delete", LOCTEXT("DeleteSection", "Manage"));
-			MenuBuilder.AddSubMenu(
-				LOCTEXT("DeleteWorkspace", "Delete workspace"),
-				LOCTEXT("DeleteWorkspaceTip", "Forget a saved workspace. Open tabs are not affected"),
-				FNewMenuDelegate::CreateLambda([Names](FMenuBuilder& SubMenu)
-				{
-					for (const FString& Name : Names)
-					{
-						SubMenu.AddMenuEntry(FText::FromString(Name), FText::GetEmpty(), FSlateIcon(),
-							FUIAction(FExecuteAction::CreateLambda([Name]()
-							{
-								if (FTabGroupsManager* Current = FTabGroupsManager::Get())
-								{
-									Current->DeleteWorkspace(Name);
-								}
-							})));
-					}
-				}));
-			MenuBuilder.EndSection();
-		})));
+		})),
+		false);
+	Entry.InsertPosition = FToolMenuInsert("Help", EToolMenuInsertType::Before);
 }
 
 #undef LOCTEXT_NAMESPACE

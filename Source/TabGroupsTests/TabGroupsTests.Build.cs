@@ -12,7 +12,7 @@ public class TabGroupsTests : ModuleRules
 		PrivateDependencyModuleNames.AddRange(new string[]
 		{
 			"Core", "CoreUObject", "Engine", "InputCore", "Slate", "SlateCore", "ImageCore", "UnrealEd",
-			"TabGroupsCore", "TabGroups",
+			"TabGroupsCore", "TabGroups", "ToolMenus",
 		});
 	}
 }
