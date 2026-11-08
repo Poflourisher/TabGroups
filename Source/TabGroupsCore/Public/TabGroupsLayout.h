@@ -39,6 +39,12 @@ namespace TabGroups
 		float DragWidth = 0.f;
 		/** The group the dragged tab belongs to, if any: its area keeps room for the tab while it is being dragged. */
 		int32 DragOwnGroup = INDEX_NONE;
+		/**
+		 * Set when several tabs are dragged together: DragCenterX and DragWidth then describe the whole block,
+		 * and these describe the tab under the pointer, which alone decides the group the block joins.
+		 */
+		float DragHeldWidth = 0.f;
+		float DragHeldCenterX = 0.f;
 	};
 
 	struct FPlacedRect
@@ -95,5 +101,8 @@ namespace TabGroups
 	 * The block gathers at the pivot's place and every other tab keeps its order.
 	 */
 	TABGROUPSCORE_API TArray<int32> ComputeBlockDropOrder(int32 NumTabs, const TArray<int32>& Block, int32 Pivot);
+
+	/** One animation step: moves Current most of the way to Target within about a fifth of a second, then lands on it. */
+	TABGROUPSCORE_API float EaseToward(float Current, float Target, float DeltaSeconds);
 
 }

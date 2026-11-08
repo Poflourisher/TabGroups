@@ -53,6 +53,21 @@ struct FTabWellState
 	int32 DropGroupAtDrop = INDEX_NONE;
 	/** A drag left a hidden (collapsed) tab active; switch to a visible tab once the drag ends. */
 	bool bRefocusAfterDrag = false;
+
+	/** Where things were last drawn, so they can slide to new places during and just after a drag. */
+	struct FSlide
+	{
+		float X = 0.f;
+		float Right = 0.f;
+		int32 Row = 0;
+	};
+	TMap<const void*, FSlide> Slides;
+	TMap<TPair<const void*, int32>, FSlide> LineSlides;
+	/** How far each selected tab still is from its place beside the held tab. */
+	TMap<const void*, float> BlockOffsets;
+	double SlideUntil = 0.0;
+	double LastSlideTime = 0.0;
+	float SlideDeltaSeconds = 0.f;
 	/** Pointer position during a drag, in well space. */
 	FVector2D DragPosition = FVector2D::ZeroVector;
 	bool bHasDragPosition = false;
@@ -206,6 +221,9 @@ private:
 	/** The selection as it was when a drag of it began, in tab bar order. */
 	TArray<TWeakPtr<SDockTab>> DragBlock;
 	TWeakPtr<SDockTab> PressToggleTab;
+	/** The selected tabs riding with the one under the pointer, in bar order; empty unless two or more are. */
+	void UpdateSlides(FTabWellState& State, const TArray<TSharedRef<SDockTab>>& ItemTabs, bool bDragging);
+	TArray<TSharedRef<SDockTab>> GatherDragBlock(const FTabWellState& State, const TSlotlessChildren<SDockTab>& Tabs, const TSharedPtr<SDockTab>& Dragged) const;
 	bool bPressedOnSelection = false;
 	bool bClearSelectionAfterDrag = false;
 	TSharedPtr<class IInputProcessor> SelectionInput;

@@ -465,7 +465,22 @@ namespace
 			// Off the tab bar and back, the way a real cursor wanders during a drag.
 			Add(0.3f, [this]() { Mouse(1, DragTo + FVector2D(0, 300)); });
 			Add(0.3f, [this]() { Mouse(1, DragTo); });
-			Add(0.5f, [this]() { Shot(TEXT("09h_dragging_selection")); });
+			Add(0.5f, [this]()
+			{
+				Shot(TEXT("09h_dragging_selection"));
+				float Min = TNumericLimits<float>::Max();
+				float Max = TNumericLimits<float>::Lowest();
+				float Total = 0.f;
+				for (const int32 Index : { 6, 7, 9 })
+				{
+					const FGeometry& Tab = AssetTab(Index)->GetPaintSpaceGeometry();
+					Min = FMath::Min(Min, Tab.GetAbsolutePosition().X);
+					Max = FMath::Max(Max, Tab.GetAbsolutePosition().X + Tab.GetAbsoluteSize().X);
+					Total += Tab.GetAbsoluteSize().X;
+				}
+				Check(TEXT("all selected tabs travel together during the drag"), Max - Min <= Total + 8.f);
+				Check(TEXT("the travelling tabs are under the pointer"), DragTo.X >= Min - 8.f && DragTo.X <= Max + 8.f);
+			});
 			Add(0.3f, [this]() { Mouse(2, DragTo); });
 			Add(1.f, [this]()
 			{

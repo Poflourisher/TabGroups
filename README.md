@@ -16,7 +16,7 @@ Right-click any tab and choose **Add tab to new group**. A small popup opens so 
 To add more tabs, drag a tab onto the group (its chip or any of its tabs), or right-click it and choose **Add tab to group**. Dropping onto a collapsed group's chip adds the tab too.
 
 ### Group several tabs at once
-**Ctrl+click** or **Shift+click** tabs to select them. Both keys do the same thing, and clicking a selected tab again removes it. The tab you're on counts as selected, like in Chrome. Selected tabs get a light highlight with a blue line on top. Right-click one of them and choose **Add N tabs to new group** or **Add N tabs to group**, or **drag any one of them** onto a group and they all go in. Dragging them elsewhere on the same bar moves them together. A plain click on any tab, or **Esc**, clears the selection.
+**Ctrl+click** or **Shift+click** tabs to select them. Both keys do the same thing, and clicking a selected tab again removes it. The tab you're on counts as selected, like in Chrome. Selected tabs get a light highlight with a blue line on top. Right-click one of them and choose **Add N tabs to new group** or **Add N tabs to group**, or **drag any one of them**: they all travel together with your mouse. Drop them on a group and they all join it; drop them elsewhere on the same bar and they stay together there. A plain click on any tab, or **Esc**, clears the selection.
 
 ### Collapse and expand
 **Left-click the coloured chip.** Collapsed groups show their name and a count, like `Meshes · 3`, and the rest of your tabs get the room back.

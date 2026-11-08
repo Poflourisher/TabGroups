@@ -200,6 +200,8 @@ namespace TabGroups
 		int32 FindGroupUnderDrag(const TArray<FEntry>& Entries, const TArray<FLayoutItem>& Items, int32 NumGroups, const FLayoutParams& Params, int32 Rows)
 		{
 			const int32 TargetRow = FMath::Clamp(Params.DragRow, 0, Rows - 1);
+			const bool bBlock = Params.DragHeldWidth > 0.f;
+			const float ProbeX = bBlock ? Params.DragHeldCenterX : Params.DragCenterX;
 			for (int32 Group = 0; Group < NumGroups; ++Group)
 			{
 				float Left = TNumericLimits<float>::Max();
@@ -218,9 +220,9 @@ namespace TabGroups
 				{
 					// The dragged tab isn't among the entries. Without this, a group's only tab would count as
 					// outside its own group the moment it is picked up, and a small accidental drag would remove it.
-					Right += Params.DragWidth;
+					Right += bBlock ? Params.DragHeldWidth : Params.DragWidth;
 				}
-				if (Params.DragCenterX >= Left && Params.DragCenterX <= Right)
+				if (ProbeX >= Left && ProbeX <= Right)
 				{
 					return Group;
 				}
@@ -280,6 +282,7 @@ namespace TabGroups
 		FitAndPlace(Entries, Params, Rows);
 		Result.NumRows = Rows;
 
+		FPlacedRect GapRect;
 		for (const FEntry& Entry : Entries)
 		{
 			FPlacedRect Placed;
@@ -294,6 +297,7 @@ namespace TabGroups
 			case EEntry::Gap:
 				Result.DragX = Entry.X;
 				Result.DragRowResolved = Entry.Row;
+				GapRect = Placed;
 				break;
 			}
 		}
@@ -329,9 +333,14 @@ namespace TabGroups
 					bAnyTab = true;
 				}
 			}
-			if (bAnyTab)
+			const bool bDropTarget = Params.bHasDrag && Result.DropGroup == Group;
+			if (bAnyTab || bDropTarget)
 			{
 				Extend(Result.Chips[Group]);
+				if (bDropTarget && GapRect.X >= Result.Chips[Group].X)
+				{
+					Extend(GapRect); // The line reaches the tab that is about to join.
+				}
 				for (const TPair<int32, FUnderline>& Pair : PerRow)
 				{
 					Result.Underlines.Add(Pair.Value);
@@ -340,6 +349,14 @@ namespace TabGroups
 		}
 
 		return Result;
+	}
+
+	float EaseToward(float Current, float Target, float DeltaSeconds)
+	{
+		constexpr float TimeConstant = 0.06f;
+		constexpr float LandingDistance = 0.5f;
+		const float Next = Target + (Current - Target) * FMath::Exp(-FMath::Max(DeltaSeconds, 0.f) / TimeConstant);
+		return (DeltaSeconds > 0.f && FMath::Abs(Next - Target) < LandingDistance) ? Target : Next;
 	}
 
 	TArray<int32> ComputeBlockDropOrder(int32 NumTabs, const TArray<int32>& Block, int32 Pivot)

@@ -308,6 +308,67 @@ bool FLayoutAnchorKeepsChipInPlace::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutBlockDrag, "TabGroups.Layout.BlockDrag", TestFlags)
+bool FLayoutBlockDrag::RunTest(const FString&)
+{
+	// Loose tab 0-100, chip 100-160, group tabs 164-264 and 264-364.
+	TArray<FLayoutItem> Items = MakeTabs(3, 100.f);
+	Items[1].Group = 0;
+	Items[2].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 200.f;
+	Params.DragCenterX = 40.f;
+	Params.DragHeldWidth = 100.f;
+	Params.DragHeldCenterX = 200.f;
+
+	const FLayoutResult Result = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("the gap is as wide as the whole block"), Result.Items[0].X, 200.f);
+	TestEqual(TEXT("the tab under the pointer decides the group"), Result.DropGroup, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutUnderlineReachesGap, "TabGroups.Layout.UnderlineReachesGap", TestFlags)
+bool FLayoutUnderlineReachesGap::RunTest(const FString&)
+{
+	// Same bar, dragging over the last tab of the group, so the gap opens at the group's end.
+	TArray<FLayoutItem> Items = MakeTabs(3, 100.f);
+	Items[1].Group = 0;
+	Items[2].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 100.f;
+	Params.DragCenterX = 350.f;
+
+	const FLayoutResult Result = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("over the group"), Result.DropGroup, 0);
+	TestEqual(TEXT("one underline"), Result.Underlines.Num(), 1);
+	TestEqual(TEXT("it runs from the chip through the gap"), Result.Underlines[0].Width, 364.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FEaseTowardLands, "TabGroups.Layout.EaseTowardLands", TestFlags)
+bool FEaseTowardLands::RunTest(const FString&)
+{
+	TestEqual(TEXT("no time, no movement"), EaseToward(0.f, 100.f, 0.f), 0.f);
+	const float Step = EaseToward(0.f, 100.f, 1.f / 60.f);
+	TestTrue(TEXT("one frame moves part of the way"), Step > 5.f && Step < 60.f);
+
+	float X = 0.f;
+	for (int32 Frame = 0; Frame < 30; ++Frame)
+	{
+		X = EaseToward(X, 100.f, 1.f / 60.f);
+	}
+	TestEqual(TEXT("it lands exactly within half a second"), X, 100.f);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnCollapsedChipJoins, "TabGroups.Drop.OnCollapsedChipJoins", TestFlags)
 bool FDropOnCollapsedChipJoins::RunTest(const FString&)
 {

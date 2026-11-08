@@ -64,4 +64,7 @@ private:
 
 	const SDockingTabWell* Well = nullptr;
 	TSlotlessChildren<STabGroupChip> Chips;
+	/** The outline eases to each new group's colour instead of jumping. */
+	mutable FLinearColor OutlineColor = FLinearColor::Transparent;
+	mutable double LastOutlineTime = 0.0;
 };
