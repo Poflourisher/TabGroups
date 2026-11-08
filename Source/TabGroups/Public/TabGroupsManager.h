@@ -66,6 +66,13 @@ struct FTabWellState
 	/** How far each selected tab still is from its place beside the held tab. */
 	TMap<const void*, float> BlockOffsets;
 	double SlideUntil = 0.0;
+	/** A group being moved by its chip, and where the mouse is in the well. */
+	FGuid DraggingGroup;
+	FVector2D GroupDragPointer = FVector2D::ZeroVector;
+	float GroupDragGrab = 0.f;
+	int32 GroupDropIndex = INDEX_NONE;
+	/** Index of DraggingGroup in Groups as of the latest layout. */
+	int32 LiftedGroup = INDEX_NONE;
 	/** The span of the bar the dragged tabs cover; chips and lines are drawn behind it. */
 	bool bHasDragCover = false;
 	float DragCoverLeft = 0.f;
@@ -132,6 +139,12 @@ public:
 	void FillTabGroupsMenu(FMenuBuilder& MenuBuilder);
 	TSharedRef<SWidget> MakeTabGroupsMenuWidget();
 	void OpenGroupEditor(const FGuid& GroupId);
+
+	/** Moving a whole group by its chip, within its own tab bar. */
+	bool BeginGroupDrag(const FGuid& GroupId, const FVector2D& ScreenPosition);
+	void UpdateGroupDrag(const FGuid& GroupId, const FVector2D& ScreenPosition);
+	void EndGroupDrag(const FGuid& GroupId, bool bCommit);
+	void CancelGroupDrags();
 	TSharedRef<SWidget> MakeGroupEditorWidget(const FGuid& GroupId);
 	/** Screen position of a point on a group chip; Fraction runs 0-1 across the chip and its row. */
 	TOptional<FVector2D> GetChipScreenPosition(const FGuid& GroupId, const FVector2D& Fraction) const;

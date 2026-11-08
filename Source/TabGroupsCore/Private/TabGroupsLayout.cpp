@@ -74,7 +74,7 @@ namespace TabGroups
 			// Groups with no open tabs yet (restored but not reopened) sit at the end of the bar.
 			for (int32 Group = 0; Group < Groups.Num(); ++Group)
 			{
-				if (!GroupSeen[Group])
+				if (!GroupSeen[Group] && !Groups[Group].bLifted)
 				{
 					AddChip(Group);
 				}
@@ -254,6 +254,45 @@ namespace TabGroups
 			return INDEX_NONE;
 		}
 
+		/** Where a dragged group may land: never between another group's members, never before the pinned tabs. */
+		int32 PlaceGroupDrag(const TArray<FEntry>& Entries, const TArray<FLayoutItem>& Items, const FLayoutParams& Params, int32 Landing)
+		{
+			auto GroupOf = [&Items](const FEntry& Entry)
+			{
+				return Entry.Kind == EEntry::Chip ? Entry.Index : Items[Entry.Index].Group;
+			};
+
+			if (Landing > 0 && Landing < Entries.Num() && Entries[Landing].Kind == EEntry::Tab)
+			{
+				const int32 Group = GroupOf(Entries[Landing - 1]);
+				if (Group != INDEX_NONE && Group == GroupOf(Entries[Landing]))
+				{
+					int32 First = Landing - 1;
+					while (First > 0 && GroupOf(Entries[First - 1]) == Group)
+					{
+						--First;
+					}
+					int32 Last = Landing;
+					while (Last + 1 < Entries.Num() && GroupOf(Entries[Last + 1]) == Group)
+					{
+						++Last;
+					}
+					const float ToLeft = Params.DragCenterX - Entries[First].X;
+					const float ToRight = Entries[Last].X + Entries[Last].Width - Params.DragCenterX;
+					Landing = ToLeft <= ToRight ? First : Last + 1;
+				}
+			}
+
+			for (int32 Position = Entries.Num() - 1; Position >= Landing; --Position)
+			{
+				if (Entries[Position].Kind == EEntry::Tab && Entries[Position].Index < Params.DragMinItem)
+				{
+					return Position + 1;
+				}
+			}
+			return Landing;
+		}
+
 		int32 FirstItemOfGroup(const TArray<FLayoutItem>& Items, int32 Group)
 		{
 			return Items.IndexOfByPredicate([Group](const FLayoutItem& Item) { return Item.Group == Group; });
@@ -275,8 +314,15 @@ namespace TabGroups
 			// First pass finds where the drag lands, second pass lays out with a gap there.
 			TArray<FEntry> Probe = Entries;
 			FitAndPlace(Probe, Params, Rows);
-			const int32 GapPosition = FindGapPosition(Probe, Params, Rows, Params.DragCenterX, Params.DragWidth * 0.5f);
-			Result.DropGroup = FindGroupUnderDrag(Probe, Items, Params, Rows);
+			int32 GapPosition = FindGapPosition(Probe, Params, Rows, Params.DragCenterX, Params.DragWidth * 0.5f);
+			if (Params.bDragIsGroup)
+			{
+				GapPosition = PlaceGroupDrag(Probe, Items, Params, GapPosition);
+			}
+			else
+			{
+				Result.DropGroup = FindGroupUnderDrag(Probe, Items, Params, Rows);
+			}
 
 			Result.DropIndex = Items.Num();
 			for (int32 Position = GapPosition; Position < Entries.Num(); ++Position)

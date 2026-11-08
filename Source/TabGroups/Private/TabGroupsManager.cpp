@@ -193,9 +193,13 @@ namespace
 		virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
 		{
 			FTabGroupsManager* Manager = FTabGroupsManager::Get();
-			if (Manager && Event.GetKey() == EKeys::Escape && Manager->GetSelectedTabs().Num() > 0)
+			if (Manager && Event.GetKey() == EKeys::Escape)
 			{
-				Manager->ClearTabSelection();
+				Manager->CancelGroupDrags();
+				if (Manager->GetSelectedTabs().Num() > 0)
+				{
+					Manager->ClearTabSelection();
+				}
 			}
 			return false;
 		}
@@ -503,6 +507,11 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 	const int32 MaxRows = ((bTopRow && !Settings->bWrapTopRowTabs) || bTooNarrowToWrap) ? 1 : Settings->MaxRows;
 
 	const TArray<TSharedRef<SDockTab>> Block = GatherDragBlock(State, Tabs, Dragged);
+	const int32 LiftedGroup = State.DraggingGroup.IsValid()
+		? State.Groups.IndexOfByPredicate([&State](const TSharedRef<FTabGroup>& Group) { return Group->Id == State.DraggingGroup; })
+		: INDEX_NONE;
+	State.LiftedGroup = LiftedGroup;
+	TArray<TSharedRef<SDockTab>> LiftedTabs;
 	const bool bStillSliding = FSlateApplication::Get().GetCurrentTime() < State.SlideUntil;
 	if (State.Groups.Num() == 0 && !Settings->bCompactTabs && MaxRows <= 1 && Pinned.Num() == 0 && Block.Num() < 2 && !bStillSliding)
 	{
@@ -549,6 +558,18 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		{
 			continue; // Travels with the tab under the pointer.
 		}
+		if (LiftedGroup != INDEX_NONE)
+		{
+			const int32* TabGroup = State.TabToGroup.Find(&Tab.Get());
+			if (TabGroup && *TabGroup == LiftedGroup)
+			{
+				if (!State.Groups[LiftedGroup]->bCollapsed || Index == Foreground)
+				{
+					LiftedTabs.Add(Tab);
+				}
+				continue; // Travels with its chip.
+			}
+		}
 		FLayoutItem Item;
 		Item.NaturalWidth = WidthOf(*Tab, Item.bFixedWidth);
 		Item.Overlap = Tab->GetOverlapWidth();
@@ -589,6 +610,7 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		FTabGroup& Group = *State.Groups[GroupIndex];
 		const int32 FirstItem = Items.IndexOfByPredicate([GroupIndex](const FLayoutItem& Item) { return Item.Group == GroupIndex; });
 		FLayoutGroup& Entry = Groups.Add_GetRef({ Group.ChipWidth });
+		Entry.bLifted = GroupIndex == LiftedGroup;
 		if (FirstItem != INDEX_NONE)
 		{
 			Group.LastFirstItem = ItemOrder[FirstItem];
@@ -654,6 +676,39 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		Params.DragRow = (State.bHasDragPosition && RowHeight > 0.f) ? FMath::FloorToInt(static_cast<float>(State.DragPosition.Y) / RowHeight) : 0;
 	}
 
+	float LiftedX = 0.f;
+	float LiftedWidth = 0.f;
+	float LiftedChipWidth = 0.f;
+	TArray<float> LiftedWidths;
+	if (LiftedGroup != INDEX_NONE)
+	{
+		LiftedChipWidth = State.Groups[LiftedGroup]->ChipWidth;
+		LiftedWidth = LiftedChipWidth;
+		for (const TSharedRef<SDockTab>& Tab : LiftedTabs)
+		{
+			bool bTabFixed = false;
+			const float Width = WidthOf(*Tab, bTabFixed);
+			LiftedWidths.Add(Width);
+			LiftedWidth += Width - Tab->GetOverlapWidth();
+		}
+		if (LiftedTabs.Num() > 0)
+		{
+			LiftedWidth += Params.ChipGap + LiftedTabs.Last()->GetOverlapWidth();
+		}
+		LiftedX = FMath::Clamp(static_cast<float>(State.GroupDragPointer.X) - State.GroupDragGrab, 0.f, FMath::Max(Params.AvailableWidth - LiftedWidth, 0.f));
+
+		Params.bHasDrag = true;
+		Params.bDragIsGroup = true;
+		Params.DragWidth = LiftedWidth;
+		Params.DragCenterX = LiftedX + LiftedWidth * 0.5f;
+		Params.DragRow = RowHeight > 0.f ? FMath::FloorToInt(static_cast<float>(State.GroupDragPointer.Y) / RowHeight) : 0;
+		const int32 Heads = NumHeadTabs(Tabs);
+		while (Params.DragMinItem < ItemTabs.Num() && (ItemOrder[Params.DragMinItem] < Heads || Pinned.Contains(&ItemTabs[Params.DragMinItem].Get())))
+		{
+			++Params.DragMinItem;
+		}
+	}
+
 	State.Layout = ComputeLayout(Items, Groups, Params);
 	State.Geometry = Geometry;
 	State.RowHeight = RowHeight;
@@ -664,6 +719,7 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		State.DropIndex = ItemOrder.IsValidIndex(State.Layout.DropIndex) ? ItemOrder[State.Layout.DropIndex] : BarIndex + 1;
 	}
 	State.DropGroup = State.Layout.DropGroup;
+	State.GroupDropIndex = LiftedGroup != INDEX_NONE ? State.Layout.DropIndex : INDEX_NONE;
 
 	if (State.NumRows != State.Layout.NumRows)
 	{
@@ -671,17 +727,46 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		const_cast<SDockingTabWell&>(Well).Invalidate(EInvalidateWidgetReason::Layout);
 	}
 
-	UpdateSlides(State, ItemTabs, Dragged.IsValid());
+	UpdateSlides(State, ItemTabs, Dragged.IsValid() || LiftedGroup != INDEX_NONE);
 	State.bHasDragCover = false;
 
-	for (int32 Index = 0; Index < ItemTabs.Num(); ++Index)
+	// The well paints its children last to first, so what must end up in front is added first.
+	if (LiftedGroup != INDEX_NONE)
 	{
-		const FPlacedRect& Rect = State.Layout.Items[Index];
-		if (Rect.bVisible)
+		const int32 Row = State.Layout.DragRowResolved;
+		const float RowY = Row * RowHeight;
+		const void* GroupKey = &State.Groups[LiftedGroup].Get();
+
+		FPlacedRect ChipRect;
+		ChipRect.bVisible = true;
+		ChipRect.X = LiftedX;
+		ChipRect.Width = LiftedChipWidth;
+		ChipRect.Row = Row;
+		State.Layout.Chips[LiftedGroup] = ChipRect;
+		State.Slides.Add(GroupKey, { LiftedX, LiftedX + LiftedChipWidth, Row });
+
+		FUnderline Line;
+		Line.Group = LiftedGroup;
+		Line.X = LiftedX;
+		Line.Width = LiftedWidth;
+		Line.Row = Row;
+		State.Layout.Underlines.Add(Line);
+		State.LineSlides.Add(TPair<const void*, int32>(GroupKey, Row), { LiftedX, LiftedX + LiftedWidth, Row });
+
+		float TabX = LiftedX + LiftedChipWidth + Params.ChipGap;
+		for (int32 Index = 0; Index < LiftedTabs.Num(); ++Index)
 		{
-			Out.AddWidget(Geometry.MakeChild(ItemTabs[Index], FVector2D(Rect.X, Rect.Row * RowHeight), FVector2D(Rect.Width, RowHeight)));
+			Out.AddWidget(Geometry.MakeChild(LiftedTabs[Index], FVector2D(TabX, RowY), FVector2D(LiftedWidths[Index], RowHeight)));
+			State.Slides.Add(&LiftedTabs[Index].Get(), { TabX, TabX + LiftedWidths[Index], Row });
+			TabX += LiftedWidths[Index] - LiftedTabs[Index]->GetOverlapWidth();
 		}
+
+		State.bHasDragCover = true;
+		State.DragCoverLeft = LiftedX;
+		State.DragCoverRight = LiftedX + LiftedWidth;
+		State.DragCoverRow = Row;
 	}
+
 	if (Dragged.IsValid())
 	{
 		const float RowY = State.Layout.DragRowResolved * RowHeight;
@@ -722,11 +807,100 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		State.Slides.Add(Dragged.Get(), { HeldX, HeldX + DraggedWidth, State.Layout.DragRowResolved });
 		Out.AddWidget(Geometry.MakeChild(Dragged.ToSharedRef(), FVector2D(HeldX, RowY), FVector2D(DraggedWidth, RowHeight)));
 	}
+	for (int32 Index = 0; Index < ItemTabs.Num(); ++Index)
+	{
+		const FPlacedRect& Rect = State.Layout.Items[Index];
+		if (Rect.bVisible)
+		{
+			Out.AddWidget(Geometry.MakeChild(ItemTabs[Index], FVector2D(Rect.X, Rect.Row * RowHeight), FVector2D(Rect.Width, RowHeight)));
+		}
+	}
 	if (Block.Num() < 2)
 	{
 		State.BlockOffsets.Reset();
 	}
 	return true;
+}
+
+bool FTabGroupsManager::BeginGroupDrag(const FGuid& GroupId, const FVector2D& ScreenPosition)
+{
+	const TSharedPtr<FTabWellState> State = FindStateOfGroup(GroupId);
+	if (!State.IsValid())
+	{
+		return false;
+	}
+	const int32 Index = State->Groups.IndexOfByPredicate([&GroupId](const TSharedRef<FTabGroup>& Group) { return Group->Id == GroupId; });
+	if (Index == INDEX_NONE || !State->Layout.Chips.IsValidIndex(Index) || !State->Layout.Chips[Index].bVisible)
+	{
+		return false;
+	}
+	bool bHasOpenTab = false;
+	for (const TWeakPtr<SDockTab>& Tab : State->Groups[Index]->Tabs)
+	{
+		bHasOpenTab |= Tab.IsValid();
+	}
+	if (!bHasOpenTab)
+	{
+		return false; // A chip for tabs that aren't open yet has nothing to carry.
+	}
+	const FVector2f Local = State->Geometry.AbsoluteToLocal(FVector2f(ScreenPosition));
+	State->DraggingGroup = GroupId;
+	State->GroupDragPointer = FVector2D(Local);
+	State->GroupDragGrab = Local.X - State->Layout.Chips[Index].X;
+	return true;
+}
+
+void FTabGroupsManager::UpdateGroupDrag(const FGuid& GroupId, const FVector2D& ScreenPosition)
+{
+	const TSharedPtr<FTabWellState> State = FindStateOfGroup(GroupId);
+	if (State.IsValid() && State->DraggingGroup == GroupId)
+	{
+		State->GroupDragPointer = FVector2D(State->Geometry.AbsoluteToLocal(FVector2f(ScreenPosition)));
+	}
+}
+
+void FTabGroupsManager::EndGroupDrag(const FGuid& GroupId, bool bCommit)
+{
+	const TSharedPtr<FTabWellState> State = FindStateOfGroup(GroupId);
+	if (!State.IsValid() || State->DraggingGroup != GroupId)
+	{
+		return;
+	}
+	State->DraggingGroup.Invalidate();
+	const int32 DropIndex = State->GroupDropIndex;
+	State->GroupDropIndex = INDEX_NONE;
+	const TSharedPtr<SWidget> WellWidget = State->Well.Pin();
+	if (!bCommit || DropIndex == INDEX_NONE || !WellWidget.IsValid())
+	{
+		return;
+	}
+
+	const SDockingTabWell& Well = *AsWell(WellWidget);
+	const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(Well);
+	const int32 GroupIndex = State->Groups.IndexOfByPredicate([&GroupId](const TSharedRef<FTabGroup>& Group) { return Group->Id == GroupId; });
+	TArray<TSharedRef<SDockTab>> Members;
+	TArray<TSharedRef<SDockTab>> Others;
+	for (int32 Index = 0; Index < Tabs.Num(); ++Index)
+	{
+		const int32* TabGroup = State->TabToGroup.Find(&Tabs[Index].Get());
+		((TabGroup && *TabGroup == GroupIndex) ? Members : Others).Add(Tabs[Index]);
+	}
+
+	TArray<TSharedRef<SDockTab>> NewOrder = Others;
+	NewOrder.Insert(Members, FMath::Clamp(DropIndex, 0, Others.Num()));
+	TabWellAccess::SetOrder(Well, NewOrder);
+	MarkChanged(State.Get());
+}
+
+void FTabGroupsManager::CancelGroupDrags()
+{
+	for (const TPair<const void*, TSharedRef<FTabWellState>>& Pair : Wells)
+	{
+		if (Pair.Value->DraggingGroup.IsValid())
+		{
+			EndGroupDrag(FGuid(Pair.Value->DraggingGroup), false);
+		}
+	}
 }
 
 void FTabGroupsManager::UpdateSlides(FTabWellState& State, const TArray<TSharedRef<SDockTab>>& ItemTabs, bool bDragging)

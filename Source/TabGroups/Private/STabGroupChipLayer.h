@@ -11,7 +11,7 @@
 class SDockingTabWell;
 class STextBlock;
 
-/** The coloured pill for one group. Left click collapses or expands, right click edits. */
+/** The coloured pill for one group. Left click collapses or expands, right click edits, dragging moves the group. */
 class STabGroupChip : public SCompoundWidget
 {
 public:
@@ -26,6 +26,8 @@ public:
 
 	virtual FReply OnMouseButtonDown(const FGeometry& Geometry, const FPointerEvent& Event) override;
 	virtual FReply OnMouseButtonUp(const FGeometry& Geometry, const FPointerEvent& Event) override;
+	virtual FReply OnMouseMove(const FGeometry& Geometry, const FPointerEvent& Event) override;
+	virtual void OnMouseCaptureLost(const FCaptureLostEvent& Event) override;
 	virtual EWindowZone::Type GetWindowZoneOverride() const override { return EWindowZone::ClientArea; }
 
 private:
@@ -34,6 +36,9 @@ private:
 	FText GetTooltip() const;
 
 	FGuid GroupId;
+	FVector2D PressPosition = FVector2D::ZeroVector;
+	bool bPressed = false;
+	bool bDraggingGroup = false;
 	FSlateRoundedBoxBrush Brush = FSlateRoundedBoxBrush(FLinearColor::White, 6.f);
 };
 

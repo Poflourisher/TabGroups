@@ -421,6 +421,38 @@ bool FLayoutGroupDetectedFromRight::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutGroupDrag, "TabGroups.Layout.GroupDrag", TestFlags)
+bool FLayoutGroupDrag::RunTest(const FString&)
+{
+	// Tab 0-100, the other group's chip 100-160, its tabs 164-264 and 264-364, tab 364-464. Group 0 is being dragged.
+	TArray<FLayoutItem> Items = MakeTabs(4, 100.f);
+	Items[1].Group = 1;
+	Items[2].Group = 1;
+	TArray<FLayoutGroup> Groups;
+	FLayoutGroup Lifted;
+	Lifted.ChipWidth = 40.f;
+	Lifted.bLifted = true;
+	Groups.Add(Lifted);
+	Groups.Add({ 60.f });
+
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.bDragIsGroup = true;
+	Params.DragWidth = 200.f;
+
+	Params.DragCenterX = 260.f;
+	FLayoutResult Result = ComputeLayout(Items, Groups, Params);
+	TestFalse(TEXT("the dragged group's chip is left to the caller"), Result.Chips[0].bVisible);
+	TestEqual(TEXT("over another group it lands after that group"), Result.DropIndex, 3);
+	TestEqual(TEXT("and doesn't join it"), Result.DropGroup, static_cast<int32>(INDEX_NONE));
+
+	Params.DragMinItem = 1;
+	Params.DragCenterX = 20.f;
+	Result = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("it can't land before the pinned tabs"), Result.DropIndex, 1);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnCollapsedChipJoins, "TabGroups.Drop.OnCollapsedChipJoins", TestFlags)
 bool FDropOnCollapsedChipJoins::RunTest(const FString&)
 {

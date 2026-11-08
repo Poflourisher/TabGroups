@@ -155,6 +155,8 @@ namespace
 			LastMouse = Pos;
 		}
 
+		float GroupDragStartX = 0.f;
+
 		static FModifierKeysState CtrlDown() { return FModifierKeysState(false, false, true, false, false, false, false, false, false); }
 		static FModifierKeysState ShiftDown() { return FModifierKeysState(true, false, false, false, false, false, false, false, false); }
 
@@ -565,6 +567,41 @@ namespace
 				{
 					Manager().RemoveFromGroup(AssetTab(Index).ToSharedRef());
 				}
+			});
+
+			// A group moves by its chip and takes its tabs along.
+			Add(0.5f, [this]()
+			{
+				Manager().ClearTabSelection();
+				GroupDragStartX = AssetTab(0)->GetPaintSpaceGeometry().GetAbsolutePosition().X;
+				DragFrom = ChipCentre(AssetTab(0).ToSharedRef(), TEXT("Materials"));
+				DragTo = DragFrom + FVector2D(700, 0);
+				Mouse(1, DragFrom);
+				Mouse(0, DragFrom);
+			});
+			Add(0.2f, [this]() { Mouse(1, DragFrom + FVector2D(12, 0)); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5)); });
+			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			Add(0.5f, [this]() { Shot(TEXT("09j_dragging_a_group")); Mouse(2, DragTo); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Materials = GroupNamed(TEXT("Materials"));
+				Check(TEXT("dragging a group doesn't collapse it"), Materials.IsValid() && !Materials->bCollapsed);
+				Check(TEXT("the group's tabs moved with its chip"), AssetTab(0)->GetPaintSpaceGeometry().GetAbsolutePosition().X > GroupDragStartX + 30.f);
+				Shot(TEXT("09k_after_group_drag"));
+				const FVector2D Chip = ChipCentre(AssetTab(0).ToSharedRef(), TEXT("Materials"));
+				DragFrom = Chip;
+				DragTo = Chip - FVector2D(1200, 0);
+				Mouse(1, DragFrom);
+				Mouse(0, DragFrom);
+			});
+			Add(0.2f, [this]() { Mouse(1, DragFrom - FVector2D(12, 0)); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5)); });
+			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			Add(0.5f, [this]() { Mouse(2, DragTo); });
+			Add(1.f, [this]()
+			{
+				Check(TEXT("a group can be dragged to the start of the bar"), AssetTab(0)->GetPaintSpaceGeometry().GetAbsolutePosition().X < GroupDragStartX - 100.f);
 			});
 
 			// The only tab of a group, dropped back on its own group, must not lose the group.

@@ -13,7 +13,7 @@ Built for **Unreal Engine 5.8 on Windows**.
 ### Make a group
 Right-click any tab and choose **Add tab to new group**. A small popup opens so you can type a name and pick a colour.
 
-To add more tabs, drag a tab onto the group (its chip or any of its tabs), or right-click it and choose **Add tab to group**. Dropping onto a collapsed group's chip adds the tab too.
+To add more tabs, drag a tab onto the group (its chip or any of its tabs), or right-click it and choose **Add tab to group**. Dropping onto a collapsed group's chip adds the tab too. **Drag a group's chip** to move the whole group along the tab bar, with all its tabs.
 
 ### Group several tabs at once
 **Ctrl+click** or **Shift+click** tabs to select them. Both keys do the same thing, and clicking a selected tab again removes it. The tab you're on counts as selected, like in Chrome. Selected tabs get a light highlight with a blue line on top. Right-click one of them and choose **Add N tabs to new group** or **Add N tabs to group**, or **drag any one of them**: they all travel together with your mouse. Drop them on a group and they all join it; drop them elsewhere on the same bar and they stay together there. A plain click on any tab, or **Esc**, clears the selection.

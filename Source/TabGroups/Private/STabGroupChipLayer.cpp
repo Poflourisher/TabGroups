@@ -123,11 +123,50 @@ FSlateColor STabGroupChip::GetBackground() const
 
 FReply STabGroupChip::OnMouseButtonDown(const FGeometry&, const FPointerEvent& Event)
 {
-	if (Event.GetEffectingButton() == EKeys::LeftMouseButton || Event.GetEffectingButton() == EKeys::RightMouseButton)
+	if (Event.GetEffectingButton() == EKeys::LeftMouseButton)
+	{
+		PressPosition = Event.GetScreenSpacePosition();
+		bDraggingGroup = false;
+		bPressed = true;
+		return FReply::Handled().CaptureMouse(SharedThis(this));
+	}
+	if (Event.GetEffectingButton() == EKeys::RightMouseButton)
 	{
 		return FReply::Handled();
 	}
 	return FReply::Unhandled();
+}
+
+FReply STabGroupChip::OnMouseMove(const FGeometry&, const FPointerEvent& Event)
+{
+	FTabGroupsManager* Manager = FTabGroupsManager::Get();
+	if (!Manager || !bPressed)
+	{
+		return FReply::Unhandled();
+	}
+	const FVector2D Position = Event.GetScreenSpacePosition();
+	if (!bDraggingGroup && FVector2D::Distance(Position, PressPosition) >= FSlateApplication::Get().GetDragTriggerDistance())
+	{
+		bDraggingGroup = Manager->BeginGroupDrag(GroupId, Position);
+	}
+	if (bDraggingGroup)
+	{
+		Manager->UpdateGroupDrag(GroupId, Position);
+	}
+	return FReply::Handled();
+}
+
+void STabGroupChip::OnMouseCaptureLost(const FCaptureLostEvent&)
+{
+	bPressed = false;
+	if (bDraggingGroup)
+	{
+		bDraggingGroup = false;
+		if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+		{
+			Manager->EndGroupDrag(GroupId, false);
+		}
+	}
 }
 
 FReply STabGroupChip::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Event)
@@ -139,11 +178,18 @@ FReply STabGroupChip::OnMouseButtonUp(const FGeometry&, const FPointerEvent& Eve
 	}
 	if (Event.GetEffectingButton() == EKeys::LeftMouseButton)
 	{
+		bPressed = false;
+		if (bDraggingGroup)
+		{
+			bDraggingGroup = false;
+			Manager->EndGroupDrag(GroupId, true);
+			return FReply::Handled().ReleaseMouseCapture();
+		}
 		if (const TSharedPtr<FTabGroup> Group = Manager->FindGroup(GroupId))
 		{
 			Manager->SetCollapsed(GroupId, !Group->bCollapsed);
 		}
-		return FReply::Handled();
+		return FReply::Handled().ReleaseMouseCapture();
 	}
 	if (Event.GetEffectingButton() == EKeys::RightMouseButton)
 	{
@@ -254,7 +300,8 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 		FSlateRect Visible = ChildRect;
 		bool bClip = false;
 		const float CenterY = (ChildRect.Top + ChildRect.Bottom) * 0.5f;
-		if (bHasCover && CenterY > CoverAbsoluteLeft.Y && CenterY < CoverAbsoluteRight.Y && ChildRect.Right > CoverAbsoluteLeft.X && ChildRect.Left < CoverAbsoluteRight.X)
+		const bool bIsLifted = StaticCastSharedRef<STabGroupChip>(Child.Widget)->GetGroupId() == State->DraggingGroup;
+		if (bHasCover && !bIsLifted && CenterY > CoverAbsoluteLeft.Y && CenterY < CoverAbsoluteRight.Y && ChildRect.Right > CoverAbsoluteLeft.X && ChildRect.Left < CoverAbsoluteRight.X)
 		{
 			const float LeftPart = CoverAbsoluteLeft.X - ChildRect.Left;
 			const float RightPart = ChildRect.Right - CoverAbsoluteRight.X;
@@ -305,7 +352,8 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 			if (Foreground >= 0 && Foreground < Tabs.Num())
 			{
 				const int32* Group = State->TabToGroup.Find(&Tabs[Foreground].Get());
-				if (Group && State->Groups.IsValidIndex(*Group) && !State->Groups[*Group]->bCollapsed)
+				const bool bCoveredByLiftedGroup = Group && State->LiftedGroup != INDEX_NONE && *Group != State->LiftedGroup;
+				if (Group && State->Groups.IsValidIndex(*Group) && !State->Groups[*Group]->bCollapsed && !bCoveredByLiftedGroup)
 				{
 					OutlineTab = Tabs[Foreground];
 					OutlineGroup = *Group;
@@ -343,9 +391,10 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 			FSlateDrawElement::MakeBox(OutDrawElements, MaxLayer, Geometry.ToPaintGeometry(FVector2f(Right - Left, UnderlineThickness), FSlateLayoutTransform(FVector2f(Left, Y))), White, ESlateDrawEffect::None, Color);
 		}
 	};
+	bool bLineIsLifted = false;
 	auto DrawLine = [&](float Left, float Right, float Y, const FLinearColor& Color)
 	{
-		if (bHasCover && Y >= CoverTop && Y < CoverBottom)
+		if (bHasCover && !bLineIsLifted && Y >= CoverTop && Y < CoverBottom)
 		{
 			DrawSegment(Left, FMath::Min(Right, CoverLeft), Y, Color);
 			DrawSegment(FMath::Max(Left, CoverRight), Right, Y, Color);
@@ -369,6 +418,7 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 		const float Right = Left + Line.Width;
 		const float Y = static_cast<float>(Position.Y);
 		const bool bSameRow = FMath::Abs(Y + UnderlineThickness * 0.5f - OutlineBottom) < State->RowHeight * 0.5f;
+		bLineIsLifted = Line.Group == State->LiftedGroup;
 		if (Line.Group == OutlineGroup && bSameRow)
 		{
 			// The line stops at the outline's feet; the outline carries the colour up around the tab.

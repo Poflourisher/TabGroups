@@ -23,6 +23,8 @@ namespace TabGroups
 		float ChipWidth = 0.f;
 		/** For a group with no items right now: the item its chip stays in front of (else it goes to the end of the bar). */
 		int32 AnchorItem = INDEX_NONE;
+		/** Being moved as a whole: its chip is left out of the layout. */
+		bool bLifted = false;
 	};
 
 	struct FLayoutParams
@@ -45,6 +47,9 @@ namespace TabGroups
 		 */
 		float DragHeldWidth = 0.f;
 		float DragHeldCenterX = 0.f;
+		/** A whole group is being dragged: it can't land inside another group, or before the first DragMinItem items. */
+		bool bDragIsGroup = false;
+		int32 DragMinItem = 0;
 	};
 
 	struct FPlacedRect
