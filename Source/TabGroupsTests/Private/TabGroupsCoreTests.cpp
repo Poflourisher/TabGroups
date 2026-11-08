@@ -263,7 +263,9 @@ bool FDropOnSingleTabGroupJoins::RunTest(const FString&)
 	Params.DragCenterX = 120.f;
 	TestEqual(TEXT("over the only tab joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 20.f;
-	TestEqual(TEXT("over the chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	TestEqual(TEXT("before the chip's middle lands in front of the group"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	Params.DragCenterX = 40.f;
+	TestEqual(TEXT("past the chip's middle joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 300.f;
 	TestEqual(TEXT("past the group stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
 	return true;
@@ -366,6 +368,31 @@ bool FEaseTowardLands::RunTest(const FString&)
 		X = EaseToward(X, 100.f, 1.f / 60.f);
 	}
 	TestEqual(TEXT("it lands exactly within half a second"), X, 100.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutGroupNotDetectedEarly, "TabGroups.Layout.GroupNotDetectedEarly", TestFlags)
+bool FLayoutGroupNotDetectedEarly::RunTest(const FString&)
+{
+	// Loose tab 0-100, chip 100-160, group tab 164-264. The dragged tab came from the left of the group.
+	TArray<FLayoutItem> Items = MakeTabs(2, 100.f);
+	Items[1].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 165.f;
+
+	Params.DragCenterX = 110.f;
+	const FLayoutResult Before = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("not yet past the chip's middle: still outside the group"), Before.DropGroup, static_cast<int32>(INDEX_NONE));
+	TestEqual(TEXT("and the chip is pushed clear of the tab"), Before.Chips[0].X, 265.f);
+
+	Params.DragCenterX = 140.f;
+	const FLayoutResult After = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("past the chip's middle: inside the group"), After.DropGroup, 0);
+	TestEqual(TEXT("and the chip hops to the left of the tab"), After.Chips[0].X, 100.f);
 	return true;
 }
 

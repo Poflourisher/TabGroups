@@ -175,7 +175,7 @@ namespace TabGroups
 		}
 
 		/** Position in Entries where a dragged tab centred at the given point belongs. */
-		int32 FindGapPosition(const TArray<FEntry>& Entries, const FLayoutParams& Params, int32 Rows)
+		int32 FindGapPosition(const TArray<FEntry>& Entries, const FLayoutParams& Params, int32 Rows, float CenterX)
 		{
 			const int32 TargetRow = FMath::Clamp(Params.DragRow, 0, Rows - 1);
 			for (int32 Position = 0; Position < Entries.Num(); ++Position)
@@ -185,7 +185,7 @@ namespace TabGroups
 				{
 					return Position;
 				}
-				if (Entry.Row == TargetRow && Params.DragCenterX < Entry.X + Entry.Width * 0.5f)
+				if (Entry.Row == TargetRow && CenterX < Entry.X + Entry.Width * 0.5f)
 				{
 					return Position;
 				}
@@ -194,40 +194,49 @@ namespace TabGroups
 		}
 
 		/**
-		 * Like Chrome: a tab dropped over a group (its chip or any of its tabs, on the pointer's row) joins it.
-		 * This works for a group of one tab and for a collapsed group's chip, unlike rules based on neighbours.
+		 * The group the dragged tab is inside of, judged by where it would land, like Chrome: right after the chip,
+		 * between two members, or still over the last member.
+		 *
+		 * Entries are measured without the gap, so anything after the landing spot really sits a whole tab further
+		 * right than its X says. That is why position alone can't be used: a chip after the landing spot only looks
+		 * as if it were under the tab.
 		 */
-		int32 FindGroupUnderDrag(const TArray<FEntry>& Entries, const TArray<FLayoutItem>& Items, int32 NumGroups, const FLayoutParams& Params, int32 Rows)
+		int32 FindGroupUnderDrag(const TArray<FEntry>& Entries, const TArray<FLayoutItem>& Items, const FLayoutParams& Params, int32 Rows)
 		{
-			const int32 TargetRow = FMath::Clamp(Params.DragRow, 0, Rows - 1);
 			const bool bBlock = Params.DragHeldWidth > 0.f;
 			const float ProbeX = bBlock ? Params.DragHeldCenterX : Params.DragCenterX;
-			for (int32 Group = 0; Group < NumGroups; ++Group)
+			const int32 Landing = FindGapPosition(Entries, Params, Rows, ProbeX);
+			if (Landing <= 0)
 			{
-				float Left = TNumericLimits<float>::Max();
-				float Right = TNumericLimits<float>::Lowest();
-				for (const FEntry& Entry : Entries)
-				{
-					const bool bMember = (Entry.Kind == EEntry::Chip && Entry.Index == Group)
-						|| (Entry.Kind == EEntry::Tab && Items[Entry.Index].Group == Group);
-					if (bMember && Entry.Row == TargetRow)
-					{
-						Left = FMath::Min(Left, Entry.X);
-						Right = FMath::Max(Right, Entry.X + Entry.Width);
-					}
-				}
-				if (Group == Params.DragOwnGroup)
-				{
-					// The dragged tab isn't among the entries. Without this, a group's only tab would count as
-					// outside its own group the moment it is picked up, and a small accidental drag would remove it.
-					Right += bBlock ? Params.DragHeldWidth : Params.DragWidth;
-				}
-				if (ProbeX >= Left && ProbeX <= Right)
-				{
-					return Group;
-				}
+				return INDEX_NONE;
 			}
-			return INDEX_NONE;
+
+			auto GroupOf = [&Items](const FEntry& Entry)
+			{
+				return Entry.Kind == EEntry::Chip ? Entry.Index : Items[Entry.Index].Group;
+			};
+
+			const FEntry& Before = Entries[Landing - 1];
+			const int32 Group = GroupOf(Before);
+			if (Group == INDEX_NONE)
+			{
+				return INDEX_NONE;
+			}
+			if (Entries.IsValidIndex(Landing) && Entries[Landing].Kind == EEntry::Tab && GroupOf(Entries[Landing]) == Group)
+			{
+				return Group;
+			}
+
+			// At the group's right-hand end: still in it only while over its last tab or chip.
+			float Right = Before.X + Before.Width;
+			if (Group == Params.DragOwnGroup)
+			{
+				// The dragged tab isn't among the entries. Without this, a group's only tab would count as
+				// outside its own group the moment it is picked up, and a small accidental drag would remove it.
+				Right += bBlock ? Params.DragHeldWidth : Params.DragWidth;
+			}
+			const bool bSameRow = Before.Row == FMath::Clamp(Params.DragRow, 0, Rows - 1);
+			return (bSameRow && ProbeX <= Right) ? Group : INDEX_NONE;
 		}
 
 		int32 FirstItemOfGroup(const TArray<FLayoutItem>& Items, int32 Group)
@@ -251,8 +260,8 @@ namespace TabGroups
 			// First pass finds where the drag lands, second pass lays out with a gap there.
 			TArray<FEntry> Probe = Entries;
 			FitAndPlace(Probe, Params, Rows);
-			const int32 GapPosition = FindGapPosition(Probe, Params, Rows);
-			Result.DropGroup = FindGroupUnderDrag(Probe, Items, Groups.Num(), Params, Rows);
+			const int32 GapPosition = FindGapPosition(Probe, Params, Rows, Params.DragCenterX);
+			Result.DropGroup = FindGroupUnderDrag(Probe, Items, Params, Rows);
 
 			Result.DropIndex = Items.Num();
 			for (int32 Position = GapPosition; Position < Entries.Num(); ++Position)

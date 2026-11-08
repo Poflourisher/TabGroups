@@ -72,7 +72,7 @@ namespace TabGroups
 		int32 NumRows = 1;
 		/** Well index the dragged tab would land at; INDEX_NONE without a drag. */
 		int32 DropIndex = INDEX_NONE;
-		/** Group the dragged tab is over (its chip or any of its tabs) and so joins on drop; INDEX_NONE if none. */
+		/** Group the dragged tab would land inside of, and so joins on drop; INDEX_NONE if none. */
 		int32 DropGroup = INDEX_NONE;
 		float DragX = 0.f;
 		int32 DragRowResolved = 0;
