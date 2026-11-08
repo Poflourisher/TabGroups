@@ -4,6 +4,7 @@
 #include "TabGroupsColors.h"
 #include "TabGroupsManager.h"
 #include "TabWellAccess.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Layout/ArrangedChildren.h"
 #include "Rendering/DrawElements.h"
 #include "Styling/AppStyle.h"
@@ -38,6 +39,11 @@ void STabGroupChip::Construct(const FArguments&, const FGuid& InGroupId)
 {
 	GroupId = InGroupId;
 	SetToolTipText(TAttribute<FText>::CreateSP(this, &STabGroupChip::GetTooltip));
+	// While a tab is dragged the mouse must reach the tab bar underneath; stopping at the chip counts as leaving the bar.
+	SetVisibility(TAttribute<EVisibility>::CreateLambda([]()
+	{
+		return FSlateApplication::Get().IsDragDropping() ? EVisibility::HitTestInvisible : EVisibility::Visible;
+	}));
 
 	ChildSlot
 	[
@@ -213,13 +219,68 @@ void STabGroupChipLayer::OnArrangeChildren(const FGeometry& Geometry, FArrangedC
 
 int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geometry, const FSlateRect& CullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& Style, bool bParentEnabled) const
 {
-	int32 MaxLayer = SPanel::OnPaint(Args, Geometry, CullingRect, OutDrawElements, LayerId, Style, bParentEnabled);
-
 	const FTabGroupsManager* Manager = FTabGroupsManager::Get();
 	const FTabWellState* State = Manager ? Manager->FindWellState(Well) : nullptr;
 	if (!State)
 	{
-		return MaxLayer;
+		return SPanel::OnPaint(Args, Geometry, CullingRect, OutDrawElements, LayerId, Style, bParentEnabled);
+	}
+
+	// This layer sits above the tab bar, so the dragged tabs would pass behind chips and lines.
+	// Leaving out the part they cover puts those behind the dragged tabs instead.
+	bool bHasCover = State->bHasDragCover;
+	float CoverLeft = 0.f, CoverRight = 0.f, CoverTop = 0.f, CoverBottom = 0.f;
+	if (bHasCover)
+	{
+		const FVector2D TopLeft = WellToLayer(Geometry, State->Geometry, FVector2D(State->DragCoverLeft, State->DragCoverRow * State->RowHeight));
+		const FVector2D BottomRight = WellToLayer(Geometry, State->Geometry, FVector2D(State->DragCoverRight, (State->DragCoverRow + 1) * State->RowHeight));
+		CoverLeft = static_cast<float>(TopLeft.X);
+		CoverRight = static_cast<float>(BottomRight.X);
+		CoverTop = static_cast<float>(TopLeft.Y);
+		CoverBottom = static_cast<float>(BottomRight.Y);
+	}
+
+	FArrangedChildren Arranged(EVisibility::Visible);
+	ArrangeChildren(Geometry, Arranged);
+	int32 MaxLayer = LayerId;
+	const FPaintArgs ChildArgs = Args.WithNewParent(this);
+	const bool bChildrenEnabled = ShouldBeEnabled(bParentEnabled);
+	const FVector2f CoverAbsoluteLeft = Geometry.LocalToAbsolute(FVector2f(CoverLeft, CoverTop));
+	const FVector2f CoverAbsoluteRight = Geometry.LocalToAbsolute(FVector2f(CoverRight, CoverBottom));
+	for (int32 Index = 0; Index < Arranged.Num(); ++Index)
+	{
+		const FArrangedWidget& Child = Arranged[Index];
+		const FSlateRect ChildRect = Child.Geometry.GetLayoutBoundingRect();
+		FSlateRect Visible = ChildRect;
+		bool bClip = false;
+		const float CenterY = (ChildRect.Top + ChildRect.Bottom) * 0.5f;
+		if (bHasCover && CenterY > CoverAbsoluteLeft.Y && CenterY < CoverAbsoluteRight.Y && ChildRect.Right > CoverAbsoluteLeft.X && ChildRect.Left < CoverAbsoluteRight.X)
+		{
+			const float LeftPart = CoverAbsoluteLeft.X - ChildRect.Left;
+			const float RightPart = ChildRect.Right - CoverAbsoluteRight.X;
+			if (LeftPart <= 0.f && RightPart <= 0.f)
+			{
+				continue; // Entirely behind the dragged tabs.
+			}
+			bClip = true;
+			if (LeftPart >= RightPart)
+			{
+				Visible.Right = CoverAbsoluteLeft.X;
+			}
+			else
+			{
+				Visible.Left = CoverAbsoluteRight.X;
+			}
+		}
+		if (bClip)
+		{
+			OutDrawElements.PushClip(FSlateClippingZone(Visible));
+		}
+		MaxLayer = FMath::Max(MaxLayer, Child.Widget->Paint(ChildArgs, Child.Geometry, CullingRect, OutDrawElements, LayerId + 1, Style, bChildrenEnabled));
+		if (bClip)
+		{
+			OutDrawElements.PopClip();
+		}
 	}
 
 	++MaxLayer;
@@ -275,11 +336,23 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 		}
 	}
 
-	auto DrawLine = [&](float Left, float Right, float Y, const FLinearColor& Color)
+	auto DrawSegment = [&](float Left, float Right, float Y, const FLinearColor& Color)
 	{
 		if (Right > Left)
 		{
 			FSlateDrawElement::MakeBox(OutDrawElements, MaxLayer, Geometry.ToPaintGeometry(FVector2f(Right - Left, UnderlineThickness), FSlateLayoutTransform(FVector2f(Left, Y))), White, ESlateDrawEffect::None, Color);
+		}
+	};
+	auto DrawLine = [&](float Left, float Right, float Y, const FLinearColor& Color)
+	{
+		if (bHasCover && Y >= CoverTop && Y < CoverBottom)
+		{
+			DrawSegment(Left, FMath::Min(Right, CoverLeft), Y, Color);
+			DrawSegment(FMath::Max(Left, CoverRight), Right, Y, Color);
+		}
+		else
+		{
+			DrawSegment(Left, Right, Y, Color);
 		}
 	};
 

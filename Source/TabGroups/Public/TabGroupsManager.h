@@ -66,6 +66,11 @@ struct FTabWellState
 	/** How far each selected tab still is from its place beside the held tab. */
 	TMap<const void*, float> BlockOffsets;
 	double SlideUntil = 0.0;
+	/** The span of the bar the dragged tabs cover; chips and lines are drawn behind it. */
+	bool bHasDragCover = false;
+	float DragCoverLeft = 0.f;
+	float DragCoverRight = 0.f;
+	int32 DragCoverRow = 0;
 	double LastSlideTime = 0.0;
 	float SlideDeltaSeconds = 0.f;
 	/** Pointer position during a drag, in well space. */

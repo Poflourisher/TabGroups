@@ -176,10 +176,10 @@ bool FLayoutDragPastCollapsedGroupSkipsHiddenTabs::RunTest(const FString&)
 	Params.bHasDrag = true;
 	Params.DragWidth = 100.f;
 
-	Params.DragCenterX = 170.f; // Just past the chip's middle.
+	Params.DragCenterX = 200.f; // Covering more than half of the chip.
 	TestEqual(TEXT("lands after the group"), ComputeLayout(Items, Groups, Params).DropIndex, 3);
 
-	Params.DragCenterX = 110.f; // Before the chip's middle.
+	Params.DragCenterX = 110.f; // Not there yet.
 	TestEqual(TEXT("lands before the group"), ComputeLayout(Items, Groups, Params).DropIndex, 1);
 	return true;
 }
@@ -264,8 +264,8 @@ bool FDropOnSingleTabGroupJoins::RunTest(const FString&)
 	TestEqual(TEXT("over the only tab joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 20.f;
 	TestEqual(TEXT("before the chip's middle lands in front of the group"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
-	Params.DragCenterX = 40.f;
-	TestEqual(TEXT("past the chip's middle joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragCenterX = 75.f;
+	TestEqual(TEXT("covering a third of the chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 300.f;
 	TestEqual(TEXT("past the group stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
 	return true;
@@ -389,10 +389,35 @@ bool FLayoutGroupNotDetectedEarly::RunTest(const FString&)
 	TestEqual(TEXT("not yet past the chip's middle: still outside the group"), Before.DropGroup, static_cast<int32>(INDEX_NONE));
 	TestEqual(TEXT("and the chip is pushed clear of the tab"), Before.Chips[0].X, 265.f);
 
-	Params.DragCenterX = 140.f;
+	Params.DragCenterX = 205.f;
+	const FLayoutResult Arriving = ComputeLayout(Items, Groups, Params);
+	TestEqual(TEXT("covering a third of the chip: arriving"), Arriving.DropGroup, 0);
+	TestEqual(TEXT("but the chip has not hopped yet"), Arriving.Chips[0].X, 265.f);
+
+	Params.DragCenterX = 240.f;
 	const FLayoutResult After = ComputeLayout(Items, Groups, Params);
-	TestEqual(TEXT("past the chip's middle: inside the group"), After.DropGroup, 0);
+	TestEqual(TEXT("covering half of the chip: inside the group"), After.DropGroup, 0);
 	TestEqual(TEXT("and the chip hops to the left of the tab"), After.Chips[0].X, 100.f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutGroupDetectedFromRight, "TabGroups.Layout.GroupDetectedFromRight", TestFlags)
+bool FLayoutGroupDetectedFromRight::RunTest(const FString&)
+{
+	// Chip 0-60, group tab 64-164, loose tab 164-264; a 100-wide tab arrives from the right.
+	TArray<FLayoutItem> Items = MakeTabs(2, 100.f);
+	Items[0].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 100.f;
+
+	Params.DragCenterX = 190.f; // Left edge at 140: covers less than a third of the last tab.
+	TestEqual(TEXT("barely touching the last tab stays out"), ComputeLayout(Items, Groups, Params).DropGroup, static_cast<int32>(INDEX_NONE));
+	Params.DragCenterX = 175.f; // Left edge at 125: more than a third.
+	TestEqual(TEXT("a third over the last tab joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	return true;
 }
 
@@ -408,7 +433,7 @@ bool FDropOnCollapsedChipJoins::RunTest(const FString&)
 	Params.bHasDrag = true;
 	Params.DragWidth = 100.f;
 
-	Params.DragCenterX = 30.f;
+	Params.DragCenterX = 75.f;
 	TestEqual(TEXT("over the collapsed chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 110.f;
 	TestEqual(TEXT("over the loose tab stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);

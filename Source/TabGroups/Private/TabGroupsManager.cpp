@@ -672,6 +672,7 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 	}
 
 	UpdateSlides(State, ItemTabs, Dragged.IsValid());
+	State.bHasDragCover = false;
 
 	for (int32 Index = 0; Index < ItemTabs.Num(); ++Index)
 	{
@@ -704,11 +705,19 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 				}
 				*Offset = EaseToward(*Offset, 0.f, State.SlideDeltaSeconds);
 				const float DrawX = MemberX + *Offset;
+				State.DragCoverLeft = State.bHasDragCover ? FMath::Min(State.DragCoverLeft, DrawX) : DrawX;
+				State.DragCoverRight = State.bHasDragCover ? FMath::Max(State.DragCoverRight, DrawX + BlockWidths[Index]) : DrawX + BlockWidths[Index];
+				State.bHasDragCover = true;
 				State.Slides.Add(Key, { DrawX, DrawX + BlockWidths[Index], State.Layout.DragRowResolved });
 				Out.AddWidget(Geometry.MakeChild(Block[Index], FVector2D(DrawX, RowY), FVector2D(BlockWidths[Index], RowHeight)));
 			}
 			MemberX += BlockWidths[Index] - Block[Index]->GetOverlapWidth();
 		}
+		State.DragCoverLeft = State.bHasDragCover ? FMath::Min(State.DragCoverLeft, HeldX) : HeldX;
+		State.DragCoverRight = State.bHasDragCover ? FMath::Max(State.DragCoverRight, HeldX + DraggedWidth) : HeldX + DraggedWidth;
+		State.DragCoverRow = State.Layout.DragRowResolved;
+		State.bHasDragCover = true;
+
 		// Remembered so that on drop it glides into its slot from where it was let go.
 		State.Slides.Add(Dragged.Get(), { HeldX, HeldX + DraggedWidth, State.Layout.DragRowResolved });
 		Out.AddWidget(Geometry.MakeChild(Dragged.ToSharedRef(), FVector2D(HeldX, RowY), FVector2D(DraggedWidth, RowHeight)));

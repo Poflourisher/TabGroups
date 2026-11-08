@@ -464,7 +464,13 @@ namespace
 			Add(0.3f, [this]() { Mouse(1, DragTo); });
 			// Off the tab bar and back, the way a real cursor wanders during a drag.
 			Add(0.3f, [this]() { Mouse(1, DragTo + FVector2D(0, 300)); });
-			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			Add(0.3f, [this]()
+			{
+				Mouse(1, DragTo + FVector2D(-90, 0));
+				Check(TEXT("a tab stays on the bar with the mouse over a group name"), DragTab.IsValid() && DragTab->GetParent().IsValid());
+				Shot(TEXT("09g_over_the_group_name"));
+				Mouse(1, DragTo);
+			});
 			Add(0.5f, [this]()
 			{
 				Shot(TEXT("09h_dragging_selection"));
