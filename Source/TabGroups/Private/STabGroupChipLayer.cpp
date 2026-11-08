@@ -225,6 +225,27 @@ int32 STabGroupChipLayer::OnPaint(const FPaintArgs& Args, const FGeometry& Geome
 			ESlateDrawEffect::None,
 			TabGroups::GetGroupDisplayColor(State->Groups[Line.Group]->Color, State->Groups[Line.Group]->CustomColor));
 	}
+
+	// Ctrl/Shift-selected tabs: a light wash and a blue line along the top, like Chrome's selected tabs.
+	const FLinearColor SelectionWash(1.f, 1.f, 1.f, 0.10f);
+	const FLinearColor SelectionLine = TabGroups::GetGroupColor(1);
+	for (const TSharedRef<SDockTab>& Tab : Manager->GetSelectedTabs())
+	{
+		if (Tab->GetParent().Get() != Well)
+		{
+			continue;
+		}
+		const int32* Group = State->TabToGroup.Find(&Tab.Get());
+		if (Group && State->Groups.IsValidIndex(*Group) && State->Groups[*Group]->bCollapsed && !Tab->IsForeground())
+		{
+			continue; // Hidden inside a collapsed group.
+		}
+		const FGeometry& TabGeometry = Tab->GetPaintSpaceGeometry();
+		const FVector2f Position = Geometry.AbsoluteToLocal(TabGeometry.GetAbsolutePosition());
+		const FVector2f Size = TabGeometry.GetAbsoluteSize() / Geometry.Scale;
+		FSlateDrawElement::MakeBox(OutDrawElements, MaxLayer, Geometry.ToPaintGeometry(Size, FSlateLayoutTransform(Position)), White, ESlateDrawEffect::None, SelectionWash);
+		FSlateDrawElement::MakeBox(OutDrawElements, MaxLayer, Geometry.ToPaintGeometry(FVector2f(Size.X, 2.f), FSlateLayoutTransform(Position)), White, ESlateDrawEffect::None, SelectionLine);
+	}
 	return MaxLayer;
 }
 

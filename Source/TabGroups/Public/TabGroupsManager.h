@@ -46,6 +46,11 @@ struct FTabWellState
 	int32 NumRows = 1;
 	/** Index the dragged tab would land at, counted without the dragged tab. */
 	int32 DropIndex = INDEX_NONE;
+	/** Group the dragged tab is over, from the latest layout, and the value captured when the drop began. */
+	int32 DropGroup = INDEX_NONE;
+	int32 DropGroupAtDrop = INDEX_NONE;
+	/** A drag left a hidden (collapsed) tab active; switch to a visible tab once the drag ends. */
+	bool bRefocusAfterDrag = false;
 	/** Pointer position during a drag, in well space. */
 	FVector2D DragPosition = FVector2D::ZeroVector;
 	bool bHasDragPosition = false;
@@ -88,6 +93,16 @@ public:
 	const TArray<TabGroups::FSavedGroup>& GetClosedGroups() const { return ClosedGroups; }
 	void ReopenClosedGroup(const FString& SavedId);
 	void ForgetClosedGroup(const FString& SavedId);
+
+	// Selecting several tabs (Ctrl+click, Shift+click), like Chrome
+	void ToggleTabSelection(const TSharedRef<SDockTab>& Tab);
+	void SelectTabRange(const TSharedRef<SDockTab>& Tab);
+	void ClearTabSelection();
+	bool IsTabSelected(const SDockTab* Tab) const;
+	/** Selected tabs that still exist, in tab bar order. A selection never spans two tab bars. */
+	TArray<TSharedRef<SDockTab>> GetSelectedTabs() const;
+	TSharedPtr<FTabGroup> CreateGroupFromTabs(const TArray<TSharedRef<SDockTab>>& Tabs);
+	void AddTabsToGroup(const TArray<TSharedRef<SDockTab>>& Tabs, const FGuid& GroupId);
 
 	/** Contents of the Tab Groups menu in the top menu bar. */
 	void FillTabGroupsMenu(FMenuBuilder& MenuBuilder);
@@ -153,6 +168,7 @@ private:
 	void MarkChanged(FTabWellState* State);
 	void MarkAllWellsDirty();
 	void ApplyPin(const TSharedRef<SDockTab>& Tab, bool bPinned);
+	void ShowVisibleTabInstead(FTabWellState& State);
 	void LockPinnedForMenu(const TSharedRef<SDockTab>& MenuTab);
 	void UnlockPinnedAfterMenu();
 
@@ -182,6 +198,9 @@ private:
 
 	TSet<FGuid> PendingExpand;
 	TArray<TWeakPtr<SDockTab>> LockedForMenu;
+	TArray<TWeakPtr<SDockTab>> SelectedTabs;
+	TWeakPtr<SDockTab> SelectionAnchor;
+	TSharedPtr<class IInputProcessor> SelectionInput;
 	double LastMenuVisibleTime = 0.0;
 	FGuid PendingEditor;
 

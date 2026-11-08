@@ -62,6 +62,8 @@ namespace TabGroups
 		int32 NumRows = 1;
 		/** Well index the dragged tab would land at; INDEX_NONE without a drag. */
 		int32 DropIndex = INDEX_NONE;
+		/** Group the dragged tab is over (its chip or any of its tabs) and so joins on drop; INDEX_NONE if none. */
+		int32 DropGroup = INDEX_NONE;
 		float DragX = 0.f;
 		int32 DragRowResolved = 0;
 	};
@@ -83,10 +85,4 @@ namespace TabGroups
 	 */
 	TABGROUPSCORE_API TArray<int32> ComputeNormalizedOrder(const TArray<FOrderItem>& Items);
 
-	/**
-	 * Which group a dropped tab ends up in, from the groups of its new neighbours.
-	 * Between two tabs of one group it joins that group; a tab of a group stays in it
-	 * while it still touches the group; anywhere else it is ungrouped.
-	 */
-	TABGROUPSCORE_API int32 ResolveDropGroup(int32 PrevGroup, int32 NextGroup, int32 OwnGroup);
 }

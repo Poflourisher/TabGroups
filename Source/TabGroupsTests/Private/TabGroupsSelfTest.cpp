@@ -135,25 +135,28 @@ namespace
 			return FVector2D(Tab->GetTickSpaceGeometry().GetAbsolutePositionAtCoordinates(FVector2f(0.5f, 0.5f)));
 		}
 
-		void Mouse(int32 Kind, const FVector2D& Pos, FKey Button = EKeys::LeftMouseButton)
+		void Mouse(int32 Kind, const FVector2D& Pos, FKey Button = EKeys::LeftMouseButton, const FModifierKeysState& Mods = FModifierKeysState())
 		{
 			FSlateApplication& App = FSlateApplication::Get();
 			if (Kind == 0)
 			{
 				Pressed.Add(Button);
-				App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(0u, Pos, LastMouse, Pressed, Button, 0.f, FModifierKeysState()));
+				App.ProcessMouseButtonDownEvent(nullptr, FPointerEvent(0u, Pos, LastMouse, Pressed, Button, 0.f, Mods));
 			}
 			else if (Kind == 1)
 			{
-				App.ProcessMouseMoveEvent(FPointerEvent(0u, Pos, LastMouse, Pressed, EKeys::Invalid, 0.f, FModifierKeysState()));
+				App.ProcessMouseMoveEvent(FPointerEvent(0u, Pos, LastMouse, Pressed, EKeys::Invalid, 0.f, Mods));
 			}
 			else
 			{
 				Pressed.Remove(Button);
-				App.ProcessMouseButtonUpEvent(FPointerEvent(0u, Pos, Pos, Pressed, Button, 0.f, FModifierKeysState()));
+				App.ProcessMouseButtonUpEvent(FPointerEvent(0u, Pos, Pos, Pressed, Button, 0.f, Mods));
 			}
 			LastMouse = Pos;
 		}
+
+		static FModifierKeysState CtrlDown() { return FModifierKeysState(false, false, true, false, false, false, false, false, false); }
+		static FModifierKeysState ShiftDown() { return FModifierKeysState(true, false, false, false, false, false, false, false, false); }
 
 		static void Raise(const TSharedPtr<SDockTab>& Tab)
 		{
@@ -164,11 +167,11 @@ namespace
 			}
 		}
 
-		void Click(const FVector2D& Pos, FKey Button = EKeys::LeftMouseButton)
+		void Click(const FVector2D& Pos, FKey Button = EKeys::LeftMouseButton, const FModifierKeysState& Mods = FModifierKeysState())
 		{
-			Mouse(1, Pos);
-			Mouse(0, Pos, Button);
-			Mouse(2, Pos, Button);
+			Mouse(1, Pos, Button, Mods);
+			Mouse(0, Pos, Button, Mods);
+			Mouse(2, Pos, Button, Mods);
 		}
 
 		void Shot(const FString& Name, TSharedPtr<SWindow> Window = nullptr)
@@ -376,6 +379,73 @@ namespace
 				Preview.Reset();
 			});
 
+			// A group of one tab can be joined by dropping a tab onto it.
+			Add(0.5f, [this]() { Raise(AssetTab(7)); Manager().CreateGroup(AssetTab(7).ToSharedRef(), TEXT("Solo"), 5, false); });
+			Add(1.f, [this]()
+			{
+				DragTab = AssetTab(6);
+				DragFrom = TabCentre(DragTab.ToSharedRef());
+				DragTo = TabCentre(AssetTab(7).ToSharedRef());
+				Mouse(1, DragFrom);
+				Mouse(0, DragFrom);
+			});
+			Add(0.3f, [this]() { Mouse(1, DragFrom + FVector2D(DragTo.X > DragFrom.X ? 12 : -12, 0)); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5)); });
+			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			Add(0.5f, [this]() { Shot(TEXT("09e_dragging_onto_one_tab_group")); });
+			Add(0.3f, [this]() { Mouse(2, DragTo); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Solo = GroupNamed(TEXT("Solo"));
+				Check(TEXT("dropping onto a one-tab group joins it"), Solo.IsValid() && Solo->Tabs.Num() == 2 && Manager().FindGroupOfTab(DragTab.ToSharedRef()) == Solo);
+				if (Solo.IsValid())
+				{
+					Manager().Ungroup(Solo->Id);
+				}
+				DragTab.Reset();
+			});
+
+			// Ctrl+click selects several tabs (the active one included); one menu action groups them all.
+			Add(0.5f, [this]() { Raise(AssetTab(9)); Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(7).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]()
+			{
+				const TArray<TSharedRef<SDockTab>> Selected = Manager().GetSelectedTabs();
+				Check(TEXT("ctrl+click selects tabs plus the active one"), Selected.Num() == 3 && Selected.Contains(AssetTab(9).ToSharedRef()));
+				Check(TEXT("ctrl+click doesn't switch the active tab"), AssetTab(9)->IsForeground());
+				Shot(TEXT("09f_selected_tabs"));
+				FMenuBuilder Builder(true, nullptr);
+				Manager().FillTabContextMenu(Builder, AssetTab(6));
+				Preview = SNew(SWindow).ClientSize(FVector2D(320, 140)).Title(FText::FromString(TEXT("Selection menu")))[Builder.MakeWidget()];
+				FSlateApplication::Get().AddWindow(Preview.ToSharedRef());
+			});
+			Add(1.f, [this]()
+			{
+				Shot(TEXT("09g_selection_menu"), Preview);
+				Preview->RequestDestroyWindow();
+				Preview.Reset();
+				const TSharedPtr<FTabGroup> Group = Manager().CreateGroupFromTabs(Manager().GetSelectedTabs());
+				Check(TEXT("selected tabs become one group"), Group.IsValid() && Group->Tabs.Num() == 3);
+				Check(TEXT("grouping clears the selection"), Manager().GetSelectedTabs().Num() == 0);
+			});
+			Add(1.f, [this]()
+			{
+				FSlateApplication::Get().DismissAllMenus();
+				if (const TSharedPtr<FTabGroup> Group = Manager().FindGroupOfTab(AssetTab(6).ToSharedRef()))
+				{
+					Manager().Ungroup(Group->Id);
+				}
+			});
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef()), EKeys::LeftMouseButton, ShiftDown()); });
+			Add(0.5f, [this]()
+			{
+				Check(TEXT("shift+click selects a range"), Manager().GetSelectedTabs().Num() >= 2);
+				Click(TabCentre(AssetTab(7).ToSharedRef()));
+			});
+			Add(0.5f, [this]() { Check(TEXT("a plain click clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
+
 			// Colour wheel: a custom colour replaces the palette colour and survives saving.
 			Add(0.5f, [this]()
 			{
@@ -436,7 +506,21 @@ namespace
 			Add(2.f, [this]() { Check(TEXT("top menu entry registered"), UToolMenus::Get()->FindMenu("MainFrame.MainMenu") != nullptr); });
 
 			// Workspaces.
-			Add(0.5f, [this]() { Manager().SaveWorkspace(TEXT("Everything")); });
+			// Steps above open assets, and Unreal activates them a few frames later, which (by design) expands their
+			// collapsed group. Collapse Meshes again right before saving, which is what the workspace checks rely on.
+			Add(0.5f, [this]()
+			{
+				if (const TSharedPtr<FTabGroup> Meshes = GroupNamed(TEXT("Meshes")))
+				{
+					Manager().SetCollapsed(Meshes->Id, true);
+				}
+			});
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Meshes = GroupNamed(TEXT("Meshes"));
+				Check(TEXT("meshes collapsed before saving the workspace"), Meshes.IsValid() && Meshes->bCollapsed);
+				Manager().SaveWorkspace(TEXT("Everything"));
+			});
 			Add(0.5f, [this]()
 			{
 				Check(TEXT("workspace saved"), Manager().GetWorkspaceNames().Contains(TEXT("Everything")));

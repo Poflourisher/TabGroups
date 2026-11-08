@@ -231,14 +231,63 @@ bool FOrderIsStableWhenAlreadyValid::RunTest(const FString&)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropGroupRules, "TabGroups.Order.DropGroupRules", TestFlags)
-bool FDropGroupRules::RunTest(const FString&)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnSingleTabGroupJoins, "TabGroups.Drop.OnSingleTabGroupJoins", TestFlags)
+bool FDropOnSingleTabGroupJoins::RunTest(const FString&)
 {
-	TestEqual(TEXT("between two members joins"), ResolveDropGroup(1, 1, INDEX_NONE), 1);
-	TestEqual(TEXT("foreign group between members moves over"), ResolveDropGroup(1, 1, 2), 1);
-	TestEqual(TEXT("own group at its edge stays"), ResolveDropGroup(1, INDEX_NONE, 1), 1);
-	TestEqual(TEXT("loose tab at a group edge stays loose"), ResolveDropGroup(1, INDEX_NONE, INDEX_NONE), INDEX_NONE);
-	TestEqual(TEXT("away from its group leaves"), ResolveDropGroup(INDEX_NONE, INDEX_NONE, 1), INDEX_NONE);
+	// [Chip 0-60] [A 64-164]   [B 164-264]: B is being dragged, so only A is in the items.
+	TArray<FLayoutItem> Items = MakeTabs(1, 100.f);
+	Items[0].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 100.f;
+
+	Params.DragCenterX = 120.f;
+	TestEqual(TEXT("over the only tab joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragCenterX = 20.f;
+	TestEqual(TEXT("over the chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragCenterX = 300.f;
+	TestEqual(TEXT("past the group stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnCollapsedChipJoins, "TabGroups.Drop.OnCollapsedChipJoins", TestFlags)
+bool FDropOnCollapsedChipJoins::RunTest(const FString&)
+{
+	TArray<FLayoutItem> Items = MakeTabs(2, 100.f);
+	Items[0].Group = 0;
+	Items[0].bHidden = true;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 100.f;
+
+	Params.DragCenterX = 30.f;
+	TestEqual(TEXT("over the collapsed chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragCenterX = 110.f;
+	TestEqual(TEXT("over the loose tab stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnlyCountsThePointerRow, "TabGroups.Drop.OnlyCountsThePointerRow", TestFlags)
+bool FDropOnlyCountsThePointerRow::RunTest(const FString&)
+{
+	// Two rows; the group is on the first. Being level with it on the second row must not join it.
+	TArray<FLayoutItem> Items = MakeTabs(12, 150.f);
+	Items[0].Group = 0;
+	TArray<FLayoutGroup> Groups;
+	Groups.Add({ 60.f });
+	FLayoutParams Params = MakeParams(1000.f, 2);
+	Params.bHasDrag = true;
+	Params.DragWidth = 150.f;
+	Params.DragCenterX = 100.f;
+
+	Params.DragRow = 0;
+	TestEqual(TEXT("same row joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragRow = 1;
+	TestEqual(TEXT("other row stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
 	return true;
 }
 

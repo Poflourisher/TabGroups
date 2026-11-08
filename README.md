@@ -13,7 +13,10 @@ Built for **Unreal Engine 5.8 on Windows**.
 ### Make a group
 Right-click any tab and choose **Add tab to new group**. A small popup opens so you can type a name and pick a colour.
 
-To add more tabs, right-click them and choose **Add tab to group**, or drag a tab between two tabs of the group.
+To add more tabs, drag a tab onto the group (its chip or any of its tabs), or right-click it and choose **Add tab to group**. Dropping onto a collapsed group's chip adds the tab too.
+
+### Group several tabs at once
+**Ctrl+click** tabs to select them, or **Shift+click** to select a range. The tab you're on counts as selected, like in Chrome. Selected tabs get a light highlight with a blue line on top. Right-click one of them and choose **Add N tabs to new group** or **Add N tabs to group**. A plain click on any tab, or **Esc**, clears the selection.
 
 ### Collapse and expand
 **Left-click the coloured chip.** Collapsed groups show their name and a count, like `Meshes · 3`, and the rest of your tabs get the room back.
@@ -30,7 +33,7 @@ If you open an asset whose tab is in a collapsed group, the group expands by its
 | **Delete group** | Closes the tabs and forgets the group |
 
 ### Take a tab out
-Drag it out of the group, or right-click it and choose **Remove from group**.
+Drag it off the group, or right-click it and choose **Remove from group**.
 
 ### Pin a tab
 Right-click a tab and choose **Pin tab**. It shrinks to an icon at the left of the bar, and **Close All** and **Close Others** skip it.

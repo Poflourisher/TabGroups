@@ -13,6 +13,8 @@
 #include "Editor.h"
 #include "Fonts/FontMeasure.h"
 #include "Framework/Application/MenuStack.h"
+#include "Framework/Application/IInputProcessor.h"
+#include "Algo/Sort.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Docking/SDockingTabStack.h"
 #include "Framework/Docking/TabManager.h"
@@ -109,6 +111,78 @@ namespace
 		FGuid Guid;
 		return FGuid::Parse(Text, Guid) ? Guid : FGuid::NewGuid();
 	}
+
+	/** The tab under the pointer, if it sits in a tab bar. */
+	TSharedPtr<SDockTab> FindTabUnderPointer(FSlateApplication& SlateApp, const FVector2D& ScreenPosition)
+	{
+		static const FName TabType("SDockTab");
+		const FWidgetPath Path = SlateApp.LocateWindowUnderMouse(ScreenPosition, SlateApp.GetInteractiveTopLevelWindows());
+		for (int32 Index = Path.Widgets.Num() - 1; Index >= 0; --Index)
+		{
+			const TSharedRef<SWidget>& Widget = Path.Widgets[Index].Widget;
+			if (Widget->GetType() == TabType)
+			{
+				const TSharedRef<SDockTab> Tab = StaticCastSharedRef<SDockTab>(Widget);
+				return Tab->GetParent().IsValid() ? TSharedPtr<SDockTab>(Tab) : nullptr;
+			}
+		}
+		return nullptr;
+	}
+
+	/**
+	 * Ctrl+click and Shift+click on tabs select them, like Chrome. Runs before Slate routes the click, so a
+	 * modified click selects instead of activating or dragging the tab. A plain click on a tab clears the selection.
+	 */
+	class FTabSelectionInputProcessor : public IInputProcessor
+	{
+	public:
+		virtual void Tick(const float, FSlateApplication&, TSharedRef<ICursor>) override {}
+
+		virtual bool HandleMouseButtonDownEvent(FSlateApplication& SlateApp, const FPointerEvent& Event) override
+		{
+			FTabGroupsManager* Manager = FTabGroupsManager::Get();
+			if (!Manager || Event.GetEffectingButton() != EKeys::LeftMouseButton)
+			{
+				return false;
+			}
+			const bool bToggle = Event.IsControlDown() && !Event.IsAltDown();
+			const bool bRange = Event.IsShiftDown() && !Event.IsControlDown() && !Event.IsAltDown();
+			if (!bToggle && !bRange)
+			{
+				if (Manager->GetSelectedTabs().Num() > 0 && FindTabUnderPointer(SlateApp, Event.GetScreenSpacePosition()).IsValid())
+				{
+					Manager->ClearTabSelection();
+				}
+				return false;
+			}
+			const TSharedPtr<SDockTab> Tab = FindTabUnderPointer(SlateApp, Event.GetScreenSpacePosition());
+			if (!Tab.IsValid() || !Manager->CanGroupOrPin(Tab.ToSharedRef()) || Manager->IsPinned(Tab.ToSharedRef()))
+			{
+				return false;
+			}
+			if (bToggle)
+			{
+				Manager->ToggleTabSelection(Tab.ToSharedRef());
+			}
+			else
+			{
+				Manager->SelectTabRange(Tab.ToSharedRef());
+			}
+			return true;
+		}
+
+		virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
+		{
+			FTabGroupsManager* Manager = FTabGroupsManager::Get();
+			if (Manager && Event.GetKey() == EKeys::Escape && Manager->GetSelectedTabs().Num() > 0)
+			{
+				Manager->ClearTabSelection();
+			}
+			return false;
+		}
+
+		virtual const TCHAR* GetDebugName() const override { return TEXT("TabGroupsSelection"); }
+	};
 }
 
 FTabGroupsManager* FTabGroupsManager::Get()
@@ -128,12 +202,19 @@ void FTabGroupsManager::Startup()
 	LoadState();
 	TickHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateSP(this, &FTabGroupsManager::Tick), TickInterval);
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateSP(this, &FTabGroupsManager::RegisterMenus));
+	SelectionInput = MakeShared<FTabSelectionInputProcessor>();
+	FSlateApplication::Get().RegisterInputPreProcessor(SelectionInput);
 }
 
 void FTabGroupsManager::Shutdown()
 {
 	bShuttingDown = true;
 	FTSTicker::RemoveTicker(TickHandle);
+	if (SelectionInput.IsValid() && FSlateApplication::IsInitialized())
+	{
+		FSlateApplication::Get().UnregisterInputPreProcessor(SelectionInput);
+	}
+	SelectionInput.Reset();
 	if (UAssetEditorSubsystem* Editors = AssetEditors())
 	{
 		Editors->OnAssetOpenedInEditor().Remove(AssetOpenedHandle);
@@ -194,10 +275,26 @@ bool FTabGroupsManager::Tick(float)
 		}
 	}
 
+	if (!bDragging)
+	{
+		for (const TPair<const void*, TSharedRef<FTabWellState>>& Pair : Wells)
+		{
+			if (Pair.Value->bRefocusAfterDrag)
+			{
+				Pair.Value->bRefocusAfterDrag = false;
+				ShowVisibleTabInstead(*Pair.Value);
+			}
+		}
+	}
+
 	const TSet<FGuid> ToExpand = MoveTemp(PendingExpand);
 	PendingExpand.Reset();
 	for (const FGuid& Id : ToExpand)
 	{
+		if (const TSharedPtr<FTabGroup> Group = FindGroup(Id))
+		{
+			UE_LOG(LogTabGroups, Log, TEXT("Expanding group '%s': its hidden tab became the active tab."), *Group->Name);
+		}
 		SetCollapsed(Id, false);
 	}
 
@@ -428,7 +525,16 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 				// so the foreground tab must always be arranged.
 				if (Index == Foreground)
 				{
-					PendingExpand.Add(State.Groups[*Group]->Id);
+					// Dragging a tab out makes Unreal activate a neighbour by list position, which can be a hidden
+					// tab; that is not the user asking for the group. Pick a visible tab after the drag instead.
+					if (Dragged.IsValid() || FSlateApplication::Get().IsDragDropping())
+					{
+						State.bRefocusAfterDrag = true;
+					}
+					else
+					{
+						PendingExpand.Add(State.Groups[*Group]->Id);
+					}
 				}
 				else
 				{
@@ -475,6 +581,7 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 	State.Geometry = Geometry;
 	State.RowHeight = RowHeight;
 	State.DropIndex = State.Layout.DropIndex;
+	State.DropGroup = State.Layout.DropGroup;
 
 	if (State.NumRows != State.Layout.NumRows)
 	{
@@ -514,8 +621,10 @@ void FTabGroupsManager::OnDragMoved(const SDockingTabWell& Well, const FVector2D
 void FTabGroupsManager::BeforeDrop(const SDockingTabWell& Well, TSharedPtr<SDockTab>& OutTab, int32& OutDropIndex)
 {
 	OutTab = TabWellAccess::DraggedTab(Well);
-	const FTabWellState* State = FindWellState(&Well);
-	OutDropIndex = State ? State->DropIndex : INDEX_NONE;
+	const TSharedPtr<FTabWellState> State = GetState(Well);
+	OutDropIndex = State->DropIndex;
+	// Kept apart from DropGroup: the engine's own drop handling may lay the well out again before AfterDrop.
+	State->DropGroupAtDrop = State->DropGroup;
 }
 
 void FTabGroupsManager::AfterDrop(SDockingTabWell& Well, const TSharedPtr<SDockTab>& Tab, int32 DropIndex)
@@ -543,20 +652,10 @@ void FTabGroupsManager::AfterDrop(SDockingTabWell& Well, const TSharedPtr<SDockT
 	}
 	TabWellAccess::MoveTab(Well, TabRef, FMath::Max(DropIndex, MinIndex));
 
-	const int32 NewIndex = Tabs.Find(TabRef);
-	auto GroupAt = [&](int32 Index) -> int32
-	{
-		if (Index < 0 || Index >= Tabs.Num())
-		{
-			return INDEX_NONE;
-		}
-		const int32* Group = State->TabToGroup.Find(&Tabs[Index].Get());
-		return Group ? *Group : INDEX_NONE;
-	};
-	const int32* Own = State->TabToGroup.Find(&TabRef.Get());
-	const int32 Resolved = ResolveDropGroup(GroupAt(NewIndex - 1), GroupAt(NewIndex + 1), Own ? *Own : INDEX_NONE);
-
-	const TSharedPtr<FTabGroup> Target = State->Groups.IsValidIndex(Resolved) ? TSharedPtr<FTabGroup>(State->Groups[Resolved]) : nullptr;
+	// Like Chrome: dropped over a group (its chip or any of its tabs) it joins that group; anywhere else it is loose.
+	const int32 DropGroup = State->DropGroupAtDrop;
+	State->DropGroupAtDrop = INDEX_NONE;
+	const TSharedPtr<FTabGroup> Target = (!IsPinned(TabRef) && State->Groups.IsValidIndex(DropGroup)) ? TSharedPtr<FTabGroup>(State->Groups[DropGroup]) : nullptr;
 	RemoveTabFromAllGroups(TabRef);
 	if (Target.IsValid())
 	{
@@ -587,7 +686,12 @@ void FTabGroupsManager::RefreshWell(const TSharedRef<FTabWellState>& State)
 	{
 		UpdateChipWidth(*Group);
 	}
-	if (State->Groups.Num() > 0)
+	const bool bHasSelection = SelectedTabs.ContainsByPredicate([Well](const TWeakPtr<SDockTab>& Weak)
+	{
+		const TSharedPtr<SDockTab> Tab = Weak.Pin();
+		return Tab.IsValid() && Tab->GetParent().Get() == AsWell(Well);
+	});
+	if (State->Groups.Num() > 0 || bHasSelection)
 	{
 		EnsureLayer(State);
 	}
@@ -917,6 +1021,47 @@ bool FTabGroupsManager::CanGroupOrPin(const TSharedRef<SDockTab>& Tab) const
 	}
 	const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
 	return Tabs.Find(Tab) >= NumHeadTabs(Tabs);
+}
+
+void FTabGroupsManager::ShowVisibleTabInstead(FTabWellState& State)
+{
+	const TSharedPtr<SWidget> WellWidget = State.Well.Pin();
+	if (!WellWidget.IsValid())
+	{
+		return;
+	}
+	const SDockingTabWell* Well = AsWell(WellWidget);
+	const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
+	const int32 Foreground = TabWellAccess::ForegroundIndex(*Well);
+	if (Foreground < 0 || Foreground >= Tabs.Num())
+	{
+		return;
+	}
+	auto IsHidden = [&](int32 Index)
+	{
+		const int32* Group = State.TabToGroup.Find(&Tabs[Index].Get());
+		return Group && State.Groups.IsValidIndex(*Group) && State.Groups[*Group]->bCollapsed;
+	};
+	if (!IsHidden(Foreground))
+	{
+		return;
+	}
+	for (int32 Distance = 1; Distance < Tabs.Num(); ++Distance)
+	{
+		for (const int32 Index : { Foreground + Distance, Foreground - Distance })
+		{
+			if (Index >= 0 && Index < Tabs.Num() && !IsHidden(Index))
+			{
+				Tabs[Foreground]->GetParentDockTabStack()->BringToFront(Tabs[Index]);
+				return;
+			}
+		}
+	}
+	// Every tab here is hidden in a collapsed group: show the group after all.
+	if (const int32* Group = State.TabToGroup.Find(&Tabs[Foreground].Get()))
+	{
+		PendingExpand.Add(State.Groups[*Group]->Id);
+	}
 }
 
 TSharedPtr<FTabGroup> FTabGroupsManager::CreateGroup(const TSharedRef<SDockTab>& Tab, const FString& Name, int32 Color, bool bOpenEditor)
@@ -1288,6 +1433,84 @@ void FTabGroupsManager::FillTabContextMenu(FMenuBuilder& MenuBuilder, TWeakPtr<S
 	};
 
 	MenuBuilder.BeginSection("TabGroups", LOCTEXT("MenuSection", "Tab groups"));
+
+	// Right-clicking inside a Ctrl/Shift selection acts on every selected tab, like Chrome.
+	const TArray<TSharedRef<SDockTab>> Selection = GetSelectedTabs();
+	if (Selection.Num() >= 2 && Selection.Contains(TabRef))
+	{
+		TArray<TWeakPtr<SDockTab>> WeakSelection;
+		for (const TSharedRef<SDockTab>& Selected : Selection)
+		{
+			WeakSelection.Add(Selected);
+		}
+		auto PinAll = [](const TArray<TWeakPtr<SDockTab>>& Weak)
+		{
+			TArray<TSharedRef<SDockTab>> Out;
+			for (const TWeakPtr<SDockTab>& Entry : Weak)
+			{
+				if (const TSharedPtr<SDockTab> Alive = Entry.Pin())
+				{
+					Out.Add(Alive.ToSharedRef());
+				}
+			}
+			return Out;
+		};
+
+		MenuBuilder.AddMenuEntry(
+			FText::Format(LOCTEXT("NewGroupMany", "Add {0} tabs to new group"), Selection.Num()),
+			LOCTEXT("NewGroupManyTip", "Start a new group with all the selected tabs"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([WeakSelection, PinAll]()
+			{
+				if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+				{
+					Manager->CreateGroupFromTabs(PinAll(WeakSelection));
+				}
+			})));
+
+		TArray<TPair<FGuid, FText>> Targets;
+		if (State.IsValid())
+		{
+			for (const TSharedRef<FTabGroup>& Group : State->Groups)
+			{
+				Targets.Add({ Group->Id, Group->Name.IsEmpty() ? LOCTEXT("UnnamedTarget", "Unnamed group") : FText::FromString(Group->Name) });
+			}
+		}
+		if (Targets.Num() > 0)
+		{
+			MenuBuilder.AddSubMenu(
+				FText::Format(LOCTEXT("AddManyToGroup", "Add {0} tabs to group"), Selection.Num()),
+				LOCTEXT("AddManyToGroupTip", "Move all the selected tabs into an existing group"),
+				FNewMenuDelegate::CreateLambda([Targets, WeakSelection, PinAll](FMenuBuilder& SubMenu)
+				{
+					for (const TPair<FGuid, FText>& Target : Targets)
+					{
+						const FGuid Id = Target.Key;
+						SubMenu.AddMenuEntry(Target.Value, FText::GetEmpty(), FSlateIcon(), FUIAction(FExecuteAction::CreateLambda([Id, WeakSelection, PinAll]()
+						{
+							if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+							{
+								Manager->AddTabsToGroup(PinAll(WeakSelection), Id);
+							}
+						})));
+					}
+				}));
+		}
+
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ClearSelection", "Clear selection"),
+			LOCTEXT("ClearSelectionTip", "Deselect the tabs (or press Esc, or click any tab)"),
+			FSlateIcon(),
+			FUIAction(FExecuteAction::CreateLambda([]()
+			{
+				if (FTabGroupsManager* Manager = FTabGroupsManager::Get())
+				{
+					Manager->ClearTabSelection();
+				}
+			})));
+		MenuBuilder.EndSection();
+		return;
+	}
 
 	MenuBuilder.AddMenuEntry(
 		LOCTEXT("NewGroup", "Add tab to new group"),
@@ -1727,6 +1950,168 @@ void FTabGroupsManager::DeleteWorkspace(const FString& Name)
 	}
 	bSaveQueued = true;
 	LastChangeTime = FPlatformTime::Seconds();
+}
+
+// ---------------------------------------------------------------------------
+// Selecting several tabs
+// ---------------------------------------------------------------------------
+
+bool FTabGroupsManager::IsTabSelected(const SDockTab* Tab) const
+{
+	return SelectedTabs.ContainsByPredicate([Tab](const TWeakPtr<SDockTab>& Weak) { return Weak.Pin().Get() == Tab; });
+}
+
+TArray<TSharedRef<SDockTab>> FTabGroupsManager::GetSelectedTabs() const
+{
+	TArray<TSharedRef<SDockTab>> Out;
+	TSharedPtr<SDockingTabWell> Well;
+	for (const TWeakPtr<SDockTab>& Weak : SelectedTabs)
+	{
+		if (const TSharedPtr<SDockTab> Tab = Weak.Pin())
+		{
+			if (!Well.IsValid())
+			{
+				Well = Tab->GetParent();
+			}
+			if (Well.IsValid() && Tab->GetParent() == Well)
+			{
+				Out.Add(Tab.ToSharedRef());
+			}
+		}
+	}
+	if (Well.IsValid())
+	{
+		const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
+		auto IndexOf = [&Tabs](const SDockTab& Tab)
+		{
+			for (int32 Index = 0; Index < Tabs.Num(); ++Index)
+			{
+				if (&Tabs[Index].Get() == &Tab)
+				{
+					return Index;
+				}
+			}
+			return MAX_int32;
+		};
+		Algo::Sort(Out, [&IndexOf](const TSharedRef<SDockTab>& A, const TSharedRef<SDockTab>& B) { return IndexOf(*A) < IndexOf(*B); });
+	}
+	return Out;
+}
+
+void FTabGroupsManager::ClearTabSelection()
+{
+	if (SelectedTabs.Num() == 0)
+	{
+		return;
+	}
+	SelectedTabs.Reset();
+	SelectionAnchor.Reset();
+	MarkAllWellsDirty();
+}
+
+void FTabGroupsManager::ToggleTabSelection(const TSharedRef<SDockTab>& Tab)
+{
+	const TSharedPtr<SDockingTabWell> Well = Tab->GetParent();
+	const TArray<TSharedRef<SDockTab>> Current = GetSelectedTabs();
+	if (Current.Num() > 0 && Current[0]->GetParent() != Well)
+	{
+		SelectedTabs.Reset(); // A selection stays on one tab bar.
+	}
+
+	if (SelectedTabs.Num() == 0 && Well.IsValid())
+	{
+		// Like Chrome, the active tab is already part of the selection.
+		const int32 Foreground = TabWellAccess::ForegroundIndex(*Well);
+		const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
+		if (Foreground >= 0 && Foreground < Tabs.Num() && Tabs[Foreground] != Tab && CanGroupOrPin(Tabs[Foreground]) && !IsPinned(Tabs[Foreground]))
+		{
+			SelectedTabs.Add(Tabs[Foreground]);
+		}
+	}
+
+	const int32 Existing = SelectedTabs.IndexOfByPredicate([&Tab](const TWeakPtr<SDockTab>& Weak) { return Weak.Pin() == Tab; });
+	if (Existing != INDEX_NONE)
+	{
+		SelectedTabs.RemoveAt(Existing);
+	}
+	else
+	{
+		SelectedTabs.Add(Tab);
+	}
+	SelectionAnchor = Tab;
+
+	if (const TSharedPtr<FTabWellState> State = FindStateOfTab(Tab))
+	{
+		EnsureLayer(State.ToSharedRef());
+		State->bDirty = true;
+	}
+}
+
+void FTabGroupsManager::SelectTabRange(const TSharedRef<SDockTab>& Tab)
+{
+	const TSharedPtr<SDockingTabWell> Well = Tab->GetParent();
+	if (!Well.IsValid())
+	{
+		return;
+	}
+	const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
+
+	// The range runs from the last tab clicked (or the active tab) to this one.
+	TSharedPtr<SDockTab> Anchor = SelectionAnchor.Pin();
+	if (!Anchor.IsValid() || Anchor->GetParent() != Well)
+	{
+		const int32 Foreground = TabWellAccess::ForegroundIndex(*Well);
+		Anchor = (Foreground >= 0 && Foreground < Tabs.Num()) ? TSharedPtr<SDockTab>(Tabs[Foreground]) : TSharedPtr<SDockTab>(Tab);
+	}
+	const int32 From = Tabs.Find(Anchor.ToSharedRef());
+	const int32 To = Tabs.Find(Tab);
+	if (From == INDEX_NONE || To == INDEX_NONE)
+	{
+		return;
+	}
+
+	SelectedTabs.Reset();
+	for (int32 Index = FMath::Min(From, To); Index <= FMath::Max(From, To); ++Index)
+	{
+		if (CanGroupOrPin(Tabs[Index]) && !IsPinned(Tabs[Index]))
+		{
+			SelectedTabs.Add(Tabs[Index]);
+		}
+	}
+	SelectionAnchor = Anchor;
+
+	if (const TSharedPtr<FTabWellState> State = FindStateOfTab(Tab))
+	{
+		EnsureLayer(State.ToSharedRef());
+		State->bDirty = true;
+	}
+}
+
+TSharedPtr<FTabGroup> FTabGroupsManager::CreateGroupFromTabs(const TArray<TSharedRef<SDockTab>>& Tabs)
+{
+	if (Tabs.Num() == 0)
+	{
+		return nullptr;
+	}
+	const TSharedPtr<FTabGroup> Group = CreateGroup(Tabs[0]);
+	if (Group.IsValid())
+	{
+		for (int32 Index = 1; Index < Tabs.Num(); ++Index)
+		{
+			AddToGroup(Tabs[Index], Group->Id);
+		}
+	}
+	ClearTabSelection();
+	return Group;
+}
+
+void FTabGroupsManager::AddTabsToGroup(const TArray<TSharedRef<SDockTab>>& Tabs, const FGuid& GroupId)
+{
+	for (const TSharedRef<SDockTab>& Tab : Tabs)
+	{
+		AddToGroup(Tab, GroupId);
+	}
+	ClearTabSelection();
 }
 
 // ---------------------------------------------------------------------------

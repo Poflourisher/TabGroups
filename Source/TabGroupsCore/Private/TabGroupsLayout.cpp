@@ -185,6 +185,35 @@ namespace TabGroups
 			return Entries.Num();
 		}
 
+		/**
+		 * Like Chrome: a tab dropped over a group (its chip or any of its tabs, on the pointer's row) joins it.
+		 * This works for a group of one tab and for a collapsed group's chip, unlike rules based on neighbours.
+		 */
+		int32 FindGroupUnderDrag(const TArray<FEntry>& Entries, const TArray<FLayoutItem>& Items, int32 NumGroups, const FLayoutParams& Params, int32 Rows)
+		{
+			const int32 TargetRow = FMath::Clamp(Params.DragRow, 0, Rows - 1);
+			for (int32 Group = 0; Group < NumGroups; ++Group)
+			{
+				float Left = TNumericLimits<float>::Max();
+				float Right = TNumericLimits<float>::Lowest();
+				for (const FEntry& Entry : Entries)
+				{
+					const bool bMember = (Entry.Kind == EEntry::Chip && Entry.Index == Group)
+						|| (Entry.Kind == EEntry::Tab && Items[Entry.Index].Group == Group);
+					if (bMember && Entry.Row == TargetRow)
+					{
+						Left = FMath::Min(Left, Entry.X);
+						Right = FMath::Max(Right, Entry.X + Entry.Width);
+					}
+				}
+				if (Params.DragCenterX >= Left && Params.DragCenterX <= Right)
+				{
+					return Group;
+				}
+			}
+			return INDEX_NONE;
+		}
+
 		int32 FirstItemOfGroup(const TArray<FLayoutItem>& Items, int32 Group)
 		{
 			return Items.IndexOfByPredicate([Group](const FLayoutItem& Item) { return Item.Group == Group; });
@@ -207,6 +236,7 @@ namespace TabGroups
 			TArray<FEntry> Probe = Entries;
 			FitAndPlace(Probe, Params, Rows);
 			const int32 GapPosition = FindGapPosition(Probe, Params, Rows);
+			Result.DropGroup = FindGroupUnderDrag(Probe, Items, Groups.Num(), Params, Rows);
 
 			Result.DropIndex = Items.Num();
 			for (int32 Position = GapPosition; Position < Entries.Num(); ++Position)
@@ -345,16 +375,4 @@ namespace TabGroups
 		return Order;
 	}
 
-	int32 ResolveDropGroup(int32 PrevGroup, int32 NextGroup, int32 OwnGroup)
-	{
-		if (PrevGroup != INDEX_NONE && PrevGroup == NextGroup)
-		{
-			return PrevGroup;
-		}
-		if (OwnGroup != INDEX_NONE && (OwnGroup == PrevGroup || OwnGroup == NextGroup))
-		{
-			return OwnGroup;
-		}
-		return INDEX_NONE;
-	}
 }
