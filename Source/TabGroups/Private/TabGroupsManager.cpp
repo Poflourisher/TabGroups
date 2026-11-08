@@ -130,7 +130,7 @@ namespace
 	}
 
 	/**
-	 * Ctrl+click and Shift+click on tabs select them, like Chrome. Runs before Slate routes the click, so a
+	 * Ctrl+click or Shift+click on a tab adds it to the selection or removes it. Runs before Slate routes the click, so a
 	 * modified click selects instead of activating or dragging the tab. A plain click on a tab clears the selection.
 	 */
 	class FTabSelectionInputProcessor : public IInputProcessor
@@ -145,9 +145,9 @@ namespace
 			{
 				return false;
 			}
-			const bool bToggle = Event.IsControlDown() && !Event.IsAltDown();
-			const bool bRange = Event.IsShiftDown() && !Event.IsControlDown() && !Event.IsAltDown();
-			if (!bToggle && !bRange)
+			// Ctrl and Shift do the same thing, by request: each adds or removes one tab.
+			const bool bToggle = (Event.IsControlDown() || Event.IsShiftDown()) && !Event.IsAltDown();
+			if (!bToggle)
 			{
 				const TSharedPtr<SDockTab> Pressed = FindTabUnderPointer(SlateApp, Event.GetScreenSpacePosition());
 				if (Pressed.IsValid() && Manager->GetSelectedTabs().Num() > 0)
@@ -169,14 +169,14 @@ namespace
 			{
 				return false;
 			}
-			if (bToggle)
+			if (Manager->GetSelectedTabs().Num() >= 2 && Manager->IsTabSelected(Tab.Get()))
 			{
-				Manager->ToggleTabSelection(Tab.ToSharedRef());
+				// Still holding Ctrl while grabbing a selected tab: let the press through so it can become a drag
+				// of the whole selection. Released without dragging, it deselects this one tab.
+				Manager->BeginPressOnSelection(Tab);
+				return false;
 			}
-			else
-			{
-				Manager->SelectTabRange(Tab.ToSharedRef());
-			}
+			Manager->ToggleTabSelection(Tab.ToSharedRef());
 			return true;
 		}
 
@@ -2086,9 +2086,10 @@ TArray<TSharedRef<SDockTab>> FTabGroupsManager::GetSelectedTabs() const
 	return Out;
 }
 
-void FTabGroupsManager::BeginPressOnSelection()
+void FTabGroupsManager::BeginPressOnSelection(const TSharedPtr<SDockTab>& ToggleOnRelease)
 {
 	bPressedOnSelection = true;
+	PressToggleTab = ToggleOnRelease;
 	DragBlock.Reset();
 	// Taken now, while every selected tab is still in the bar and in its original order.
 	for (const TSharedRef<SDockTab>& Tab : GetSelectedTabs())
@@ -2104,9 +2105,16 @@ void FTabGroupsManager::EndPressOnSelection(bool bIsDragging)
 		return;
 	}
 	bPressedOnSelection = false;
+	const TSharedPtr<SDockTab> ToggleTab = PressToggleTab.Pin();
+	PressToggleTab.Reset();
 	if (bIsDragging)
 	{
 		bClearSelectionAfterDrag = true; // A drop on a tab bar uses the selection first; see AfterDrop.
+	}
+	else if (ToggleTab.IsValid())
+	{
+		DragBlock.Reset();
+		ToggleTabSelection(ToggleTab.ToSharedRef());
 	}
 	else
 	{
@@ -2122,7 +2130,6 @@ void FTabGroupsManager::ClearTabSelection()
 		return;
 	}
 	SelectedTabs.Reset();
-	SelectionAnchor.Reset();
 	MarkAllWellsDirty();
 }
 
@@ -2155,49 +2162,6 @@ void FTabGroupsManager::ToggleTabSelection(const TSharedRef<SDockTab>& Tab)
 	{
 		SelectedTabs.Add(Tab);
 	}
-	SelectionAnchor = Tab;
-
-	if (const TSharedPtr<FTabWellState> State = FindStateOfTab(Tab))
-	{
-		EnsureLayer(State.ToSharedRef());
-		State->bDirty = true;
-	}
-}
-
-void FTabGroupsManager::SelectTabRange(const TSharedRef<SDockTab>& Tab)
-{
-	const TSharedPtr<SDockingTabWell> Well = Tab->GetParent();
-	if (!Well.IsValid())
-	{
-		return;
-	}
-	const TSlotlessChildren<SDockTab>& Tabs = TabWellAccess::Tabs(*Well);
-
-	// The range runs from the last tab clicked (or the active tab) to this one.
-	TSharedPtr<SDockTab> Anchor = SelectionAnchor.Pin();
-	if (!Anchor.IsValid() || Anchor->GetParent() != Well)
-	{
-		const int32 Foreground = TabWellAccess::ForegroundIndex(*Well);
-		Anchor = (Foreground >= 0 && Foreground < Tabs.Num()) ? TSharedPtr<SDockTab>(Tabs[Foreground]) : TSharedPtr<SDockTab>(Tab);
-	}
-	const int32 From = Tabs.Find(Anchor.ToSharedRef());
-	const int32 To = Tabs.Find(Tab);
-	if (From == INDEX_NONE || To == INDEX_NONE)
-	{
-		return;
-	}
-
-	SelectedTabs.Reset();
-	for (int32 Index = FMath::Min(From, To); Index <= FMath::Max(From, To); ++Index)
-	{
-		const TSharedPtr<FTabGroup> Owner = FindGroupOfTab(Tabs[Index]);
-		const bool bHidden = Owner.IsValid() && Owner->bCollapsed;
-		if (!bHidden && CanGroupOrPin(Tabs[Index]) && !IsPinned(Tabs[Index]))
-		{
-			SelectedTabs.Add(Tabs[Index]);
-		}
-	}
-	SelectionAnchor = Anchor;
 
 	if (const TSharedPtr<FTabWellState> State = FindStateOfTab(Tab))
 	{

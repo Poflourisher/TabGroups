@@ -96,12 +96,11 @@ public:
 	void ReopenClosedGroup(const FString& SavedId);
 	void ForgetClosedGroup(const FString& SavedId);
 
-	// Selecting several tabs (Ctrl+click, Shift+click), like Chrome
+	// Selecting several tabs (Ctrl+click or Shift+click)
 	void ToggleTabSelection(const TSharedRef<SDockTab>& Tab);
-	void SelectTabRange(const TSharedRef<SDockTab>& Tab);
 	void ClearTabSelection();
 	/** A plain press landed on a selected tab: keep the selection in case this becomes a drag of all of them. */
-	void BeginPressOnSelection();
+	void BeginPressOnSelection(const TSharedPtr<SDockTab>& ToggleOnRelease = nullptr);
 	void EndPressOnSelection(bool bIsDragging);
 	bool IsTabSelected(const SDockTab* Tab) const;
 	/** Selected tabs that still exist, in tab bar order. A selection never spans two tab bars. */
@@ -204,9 +203,9 @@ private:
 	TSet<FGuid> PendingExpand;
 	TArray<TWeakPtr<SDockTab>> LockedForMenu;
 	TArray<TWeakPtr<SDockTab>> SelectedTabs;
-	TWeakPtr<SDockTab> SelectionAnchor;
 	/** The selection as it was when a drag of it began, in tab bar order. */
 	TArray<TWeakPtr<SDockTab>> DragBlock;
+	TWeakPtr<SDockTab> PressToggleTab;
 	bool bPressedOnSelection = false;
 	bool bClearSelectionAfterDrag = false;
 	TSharedPtr<class IInputProcessor> SelectionInput;

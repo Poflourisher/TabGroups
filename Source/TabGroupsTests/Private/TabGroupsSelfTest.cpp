@@ -441,7 +441,7 @@ namespace
 			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef()), EKeys::LeftMouseButton, ShiftDown()); });
 			Add(0.5f, [this]()
 			{
-				Check(TEXT("shift+click selects a range"), Manager().GetSelectedTabs().Num() >= 2);
+				Check(TEXT("shift+click adds one tab, the same as ctrl"), Manager().GetSelectedTabs().Num() == 2);
 				Click(TabCentre(AssetTab(7).ToSharedRef()));
 			});
 			Add(0.5f, [this]() { Check(TEXT("a plain click clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
@@ -461,6 +461,9 @@ namespace
 			});
 			Add(0.2f, [this]() { Check(TEXT("pressing a selected tab keeps the selection"), Manager().GetSelectedTabs().Num() == 3); Mouse(1, DragFrom + FVector2D(-12, 0)); });
 			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5)); });
+			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			// Off the tab bar and back, the way a real cursor wanders during a drag.
+			Add(0.3f, [this]() { Mouse(1, DragTo + FVector2D(0, 300)); });
 			Add(0.3f, [this]() { Mouse(1, DragTo); });
 			Add(0.5f, [this]() { Shot(TEXT("09h_dragging_selection")); });
 			Add(0.3f, [this]() { Mouse(2, DragTo); });
@@ -482,6 +485,66 @@ namespace
 			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
 			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef())); });
 			Add(0.5f, [this]() { Check(TEXT("a click on a selected tab clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
+
+			// Exactly what a person does: two tabs, Ctrl still held while grabbing one and dragging onto a group.
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]()
+			{
+				Check(TEXT("two tabs selected before the ctrl drag"), Manager().GetSelectedTabs().Num() == 2);
+				DragFrom = TabCentre(AssetTab(6).ToSharedRef());
+				DragTo = TabCentre(AssetTab(0).ToSharedRef());
+				Mouse(1, DragFrom, EKeys::LeftMouseButton, CtrlDown());
+				Mouse(0, DragFrom, EKeys::LeftMouseButton, CtrlDown());
+			});
+			Add(0.2f, [this]() { Mouse(1, DragFrom + FVector2D(-12, 0), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.3f, [this]() { Mouse(1, DragTo, EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Mouse(2, DragTo, EKeys::LeftMouseButton, CtrlDown()); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Materials = GroupNamed(TEXT("Materials"));
+				Check(TEXT("holding ctrl while dragging moves both tabs into the group"), Materials.IsValid() && Materials->Tabs.Num() == 5);
+				for (const int32 Index : { 6, 9 })
+				{
+					Manager().RemoveFromGroup(AssetTab(Index).ToSharedRef());
+				}
+			});
+
+			// Ctrl+click on a selected tab, with no drag, takes just that tab out of the selection.
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(7).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(7).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]()
+			{
+				Check(TEXT("ctrl+click on a selected tab deselects only that tab"), Manager().GetSelectedTabs().Num() == 2);
+				Manager().ClearTabSelection();
+			});
+
+			// Shift works the same as Ctrl, including when it is still held while dragging.
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, ShiftDown()); });
+			Add(0.5f, [this]()
+			{
+				DragFrom = TabCentre(AssetTab(6).ToSharedRef());
+				DragTo = TabCentre(AssetTab(0).ToSharedRef());
+				Mouse(1, DragFrom, EKeys::LeftMouseButton, ShiftDown());
+				Mouse(0, DragFrom, EKeys::LeftMouseButton, ShiftDown());
+			});
+			Add(0.2f, [this]() { Mouse(1, DragFrom + FVector2D(-12, 0), EKeys::LeftMouseButton, ShiftDown()); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5), EKeys::LeftMouseButton, ShiftDown()); });
+			Add(0.3f, [this]() { Mouse(1, DragTo, EKeys::LeftMouseButton, ShiftDown()); });
+			Add(0.5f, [this]() { Mouse(2, DragTo, EKeys::LeftMouseButton, ShiftDown()); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Materials = GroupNamed(TEXT("Materials"));
+				Check(TEXT("holding shift while dragging moves both tabs into the group"), Materials.IsValid() && Materials->Tabs.Num() == 5);
+				for (const int32 Index : { 6, 9 })
+				{
+					Manager().RemoveFromGroup(AssetTab(Index).ToSharedRef());
+				}
+			});
 
 			// The only tab of a group, dropped back on its own group, must not lose the group.
 			Add(0.5f, [this]() { Manager().CreateGroup(AssetTab(7).ToSharedRef(), TEXT("Lone"), 5, false); });
