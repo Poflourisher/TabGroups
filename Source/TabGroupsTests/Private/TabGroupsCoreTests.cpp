@@ -231,6 +231,23 @@ bool FOrderIsStableWhenAlreadyValid::RunTest(const FString&)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FBlockDropGathersAtPivot, "TabGroups.Order.BlockDropGathersAtPivot", TestFlags)
+bool FBlockDropGathersAtPivot::RunTest(const FString&)
+{
+	// Tabs 0-5. Selected 1, 3 and 5, in that order; tab 3 was dragged and dropped at index 3.
+	const TArray<int32> Expected = { 0, 2, 1, 3, 5, 4 };
+	TestTrue(TEXT("gathers around the dragged tab"), ComputeBlockDropOrder(6, { 1, 3, 5 }, 3) == Expected);
+
+	// A single tab changes nothing.
+	const TArray<int32> Same = { 0, 1, 2 };
+	TestTrue(TEXT("one tab is unchanged"), ComputeBlockDropOrder(3, { 1 }, 1) == Same);
+
+	// Pivot at the far left pulls the others to it.
+	const TArray<int32> Left = { 0, 2, 4, 1, 3 };
+	TestTrue(TEXT("pulls to the left"), ComputeBlockDropOrder(5, { 0, 2, 4 }, 0) == Left);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropOnSingleTabGroupJoins, "TabGroups.Drop.OnSingleTabGroupJoins", TestFlags)
 bool FDropOnSingleTabGroupJoins::RunTest(const FString&)
 {
@@ -249,6 +266,45 @@ bool FDropOnSingleTabGroupJoins::RunTest(const FString&)
 	TestEqual(TEXT("over the chip joins"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
 	Params.DragCenterX = 300.f;
 	TestEqual(TEXT("past the group stays out"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDropKeepsRoomForOwnTab, "TabGroups.Drop.KeepsRoomForOwnTab", TestFlags)
+bool FDropKeepsRoomForOwnTab::RunTest(const FString&)
+{
+	// A group whose only tab is being dragged: its chip holds its place (0-60), then one loose tab (64-164).
+	TArray<FLayoutItem> Items = MakeTabs(1, 100.f);
+	TArray<FLayoutGroup> Groups;
+	FLayoutGroup Group;
+	Group.ChipWidth = 60.f;
+	Group.AnchorItem = 0;
+	Groups.Add(Group);
+	FLayoutParams Params = MakeParams(1000.f);
+	Params.bHasDrag = true;
+	Params.DragWidth = 100.f;
+	Params.DragCenterX = 110.f;
+
+	TestEqual(TEXT("another group's tab is outside here"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	Params.DragOwnGroup = 0;
+	TestEqual(TEXT("its own tab is still inside"), ComputeLayout(Items, Groups, Params).DropGroup, 0);
+	Params.DragCenterX = 400.f;
+	TestEqual(TEXT("dragged well away it leaves"), ComputeLayout(Items, Groups, Params).DropGroup, INDEX_NONE);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FLayoutAnchorKeepsChipInPlace, "TabGroups.Layout.AnchorKeepsChipInPlace", TestFlags)
+bool FLayoutAnchorKeepsChipInPlace::RunTest(const FString&)
+{
+	// A group whose only tab is being dragged, between two loose tabs.
+	TArray<FLayoutGroup> Groups;
+	FLayoutGroup Group;
+	Group.ChipWidth = 60.f;
+	Group.AnchorItem = 1;
+	Groups.Add(Group);
+
+	const FLayoutResult Result = ComputeLayout(MakeTabs(2, 100.f), Groups, MakeParams(1000.f));
+	TestEqual(TEXT("chip stays in front of its anchor"), Result.Chips[0].X, 100.f);
+	TestEqual(TEXT("following tab goes after the chip"), Result.Items[1].X, 164.f);
 	return true;
 }
 

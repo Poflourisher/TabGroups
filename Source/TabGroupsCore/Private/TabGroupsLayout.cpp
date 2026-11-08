@@ -42,6 +42,14 @@ namespace TabGroups
 
 			for (int32 Index = 0; Index < Items.Num(); ++Index)
 			{
+				for (int32 Group = 0; Group < Groups.Num(); ++Group)
+				{
+					if (!GroupSeen[Group] && Groups[Group].AnchorItem == Index)
+					{
+						AddChip(Group);
+					}
+				}
+
 				const FLayoutItem& Item = Items[Index];
 				const bool bValidGroup = Groups.IsValidIndex(Item.Group);
 				if (bValidGroup && Item.Group != Previous && !GroupSeen[Item.Group])
@@ -206,6 +214,12 @@ namespace TabGroups
 						Right = FMath::Max(Right, Entry.X + Entry.Width);
 					}
 				}
+				if (Group == Params.DragOwnGroup)
+				{
+					// The dragged tab isn't among the entries. Without this, a group's only tab would count as
+					// outside its own group the moment it is picked up, and a small accidental drag would remove it.
+					Right += Params.DragWidth;
+				}
 				if (Params.DragCenterX >= Left && Params.DragCenterX <= Right)
 				{
 					return Group;
@@ -326,6 +340,24 @@ namespace TabGroups
 		}
 
 		return Result;
+	}
+
+	TArray<int32> ComputeBlockDropOrder(int32 NumTabs, const TArray<int32>& Block, int32 Pivot)
+	{
+		TArray<int32> Order;
+		Order.Reserve(NumTabs);
+		for (int32 Index = 0; Index < NumTabs; ++Index)
+		{
+			if (Index == Pivot)
+			{
+				Order.Append(Block);
+			}
+			else if (!Block.Contains(Index))
+			{
+				Order.Add(Index);
+			}
+		}
+		return Order;
 	}
 
 	TArray<int32> ComputeNormalizedOrder(const TArray<FOrderItem>& Items)

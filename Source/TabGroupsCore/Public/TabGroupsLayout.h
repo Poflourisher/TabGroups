@@ -21,6 +21,8 @@ namespace TabGroups
 	struct FLayoutGroup
 	{
 		float ChipWidth = 0.f;
+		/** For a group with no items right now: the item its chip stays in front of (else it goes to the end of the bar). */
+		int32 AnchorItem = INDEX_NONE;
 	};
 
 	struct FLayoutParams
@@ -35,6 +37,8 @@ namespace TabGroups
 		float DragCenterX = 0.f;
 		int32 DragRow = 0;
 		float DragWidth = 0.f;
+		/** The group the dragged tab belongs to, if any: its area keeps room for the tab while it is being dragged. */
+		int32 DragOwnGroup = INDEX_NONE;
 	};
 
 	struct FPlacedRect
@@ -84,5 +88,12 @@ namespace TabGroups
 	 * then the rest with each group's tabs pulled together at its first member. Otherwise stable.
 	 */
 	TABGROUPSCORE_API TArray<int32> ComputeNormalizedOrder(const TArray<FOrderItem>& Items);
+
+	/**
+	 * Order after dropping several selected tabs together. Block holds their current indices in the order they
+	 * should end up in; Pivot (one of them) is the tab that was dragged and already sits where the user dropped it.
+	 * The block gathers at the pivot's place and every other tab keeps its order.
+	 */
+	TABGROUPSCORE_API TArray<int32> ComputeBlockDropOrder(int32 NumTabs, const TArray<int32>& Block, int32 Pivot);
 
 }

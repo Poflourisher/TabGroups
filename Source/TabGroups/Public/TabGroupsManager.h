@@ -30,6 +30,8 @@ struct FTabGroup
 	/** Member order from the saved file, for restored groups. */
 	TArray<FString> SavedOrder;
 	float ChipWidth = 0.f;
+	/** Where the group's first tab was in the latest layout, so its chip can hold its place during a drag. */
+	int32 LastFirstItem = INDEX_NONE;
 };
 
 /** Everything known about one tab well. */
@@ -98,6 +100,9 @@ public:
 	void ToggleTabSelection(const TSharedRef<SDockTab>& Tab);
 	void SelectTabRange(const TSharedRef<SDockTab>& Tab);
 	void ClearTabSelection();
+	/** A plain press landed on a selected tab: keep the selection in case this becomes a drag of all of them. */
+	void BeginPressOnSelection();
+	void EndPressOnSelection(bool bIsDragging);
 	bool IsTabSelected(const SDockTab* Tab) const;
 	/** Selected tabs that still exist, in tab bar order. A selection never spans two tab bars. */
 	TArray<TSharedRef<SDockTab>> GetSelectedTabs() const;
@@ -200,6 +205,10 @@ private:
 	TArray<TWeakPtr<SDockTab>> LockedForMenu;
 	TArray<TWeakPtr<SDockTab>> SelectedTabs;
 	TWeakPtr<SDockTab> SelectionAnchor;
+	/** The selection as it was when a drag of it began, in tab bar order. */
+	TArray<TWeakPtr<SDockTab>> DragBlock;
+	bool bPressedOnSelection = false;
+	bool bClearSelectionAfterDrag = false;
 	TSharedPtr<class IInputProcessor> SelectionInput;
 	double LastMenuVisibleTime = 0.0;
 	FGuid PendingEditor;

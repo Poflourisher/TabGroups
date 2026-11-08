@@ -149,9 +149,18 @@ namespace
 			const bool bRange = Event.IsShiftDown() && !Event.IsControlDown() && !Event.IsAltDown();
 			if (!bToggle && !bRange)
 			{
-				if (Manager->GetSelectedTabs().Num() > 0 && FindTabUnderPointer(SlateApp, Event.GetScreenSpacePosition()).IsValid())
+				const TSharedPtr<SDockTab> Pressed = FindTabUnderPointer(SlateApp, Event.GetScreenSpacePosition());
+				if (Pressed.IsValid() && Manager->GetSelectedTabs().Num() > 0)
 				{
-					Manager->ClearTabSelection();
+					// Pressing a selected tab may start dragging all of them, so only a release without a drag clears it.
+					if (Manager->GetSelectedTabs().Num() >= 2 && Manager->IsTabSelected(Pressed.Get()))
+					{
+						Manager->BeginPressOnSelection();
+					}
+					else
+					{
+						Manager->ClearTabSelection();
+					}
 				}
 				return false;
 			}
@@ -169,6 +178,16 @@ namespace
 				Manager->SelectTabRange(Tab.ToSharedRef());
 			}
 			return true;
+		}
+
+		virtual bool HandleMouseButtonUpEvent(FSlateApplication& SlateApp, const FPointerEvent& Event) override
+		{
+			FTabGroupsManager* Manager = FTabGroupsManager::Get();
+			if (Manager && Event.GetEffectingButton() == EKeys::LeftMouseButton)
+			{
+				Manager->EndPressOnSelection(SlateApp.IsDragDropping());
+			}
+			return false;
 		}
 
 		virtual bool HandleKeyDownEvent(FSlateApplication&, const FKeyEvent& Event) override
@@ -273,6 +292,13 @@ bool FTabGroupsManager::Tick(float)
 		{
 			RefreshWell(State);
 		}
+	}
+
+	if (!bDragging && bClearSelectionAfterDrag)
+	{
+		bClearSelectionAfterDrag = false;
+		DragBlock.Reset();
+		ClearTabSelection();
 	}
 
 	if (!bDragging)
@@ -547,9 +573,20 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 	}
 
 	TArray<FLayoutGroup> Groups;
-	for (const TSharedRef<FTabGroup>& Group : State.Groups)
+	for (int32 GroupIndex = 0; GroupIndex < State.Groups.Num(); ++GroupIndex)
 	{
-		Groups.Add({ Group->ChipWidth });
+		FTabGroup& Group = *State.Groups[GroupIndex];
+		const int32 FirstItem = Items.IndexOfByPredicate([GroupIndex](const FLayoutItem& Item) { return Item.Group == GroupIndex; });
+		FLayoutGroup& Entry = Groups.Add_GetRef({ Group.ChipWidth });
+		if (FirstItem != INDEX_NONE)
+		{
+			Group.LastFirstItem = FirstItem;
+		}
+		else if (Dragged.IsValid() && Group.Tabs.Num() > 0)
+		{
+			// Its only tab is being dragged: the chip stays put instead of jumping to the end of the bar.
+			Entry.AnchorItem = Group.LastFirstItem;
+		}
 	}
 
 	FLayoutParams Params;
@@ -569,6 +606,10 @@ bool FTabGroupsManager::ArrangeWell(const SDockingTabWell& Well, const FGeometry
 		DraggedWidth = WidthOf(*Dragged, bFixed);
 		Params.bHasDrag = true;
 		Params.DragWidth = DraggedWidth;
+		if (const int32* OwnGroup = State.TabToGroup.Find(Dragged.Get()))
+		{
+			Params.DragOwnGroup = *OwnGroup;
+		}
 		// The well works out its drag offset for uniform tabs, so use the pointer and this tab's real width.
 		DragX = State.bHasDragPosition
 			? static_cast<float>(State.DragPosition.X - TabWellAccess::GrabFraction(Well).X * DraggedWidth)
@@ -656,12 +697,59 @@ void FTabGroupsManager::AfterDrop(SDockingTabWell& Well, const TSharedPtr<SDockT
 	const int32 DropGroup = State->DropGroupAtDrop;
 	State->DropGroupAtDrop = INDEX_NONE;
 	const TSharedPtr<FTabGroup> Target = (!IsPinned(TabRef) && State->Groups.IsValidIndex(DropGroup)) ? TSharedPtr<FTabGroup>(State->Groups[DropGroup]) : nullptr;
-	RemoveTabFromAllGroups(TabRef);
+
+	// Dragging one tab of a selection moves them all, like Chrome.
+	TArray<TSharedRef<SDockTab>> Moved;
+	for (const TWeakPtr<SDockTab>& Weak : DragBlock)
+	{
+		const TSharedPtr<SDockTab> Member = Weak.Pin();
+		if (Member.IsValid() && Member->GetParent().Get() == &Well && Tabs.Find(Member.ToSharedRef()) != INDEX_NONE)
+		{
+			Moved.Add(Member.ToSharedRef());
+		}
+	}
+	const bool bMovedBlock = Moved.Num() >= 2 && Moved.Contains(TabRef);
+	if (bMovedBlock)
+	{
+		TArray<int32> Block;
+		for (const TSharedRef<SDockTab>& Member : Moved)
+		{
+			Block.Add(Tabs.Find(Member));
+		}
+		TArray<TSharedRef<SDockTab>> NewOrder;
+		for (const int32 Index : ComputeBlockDropOrder(Tabs.Num(), Block, Tabs.Find(TabRef)))
+		{
+			NewOrder.Add(Tabs[Index]);
+		}
+		TabWellAccess::SetOrder(Well, NewOrder);
+	}
+	else
+	{
+		Moved = { TabRef };
+	}
+	DragBlock.Reset();
+
+	for (const TSharedRef<SDockTab>& Member : Moved)
+	{
+		RemoveTabFromAllGroups(Member);
+	}
 	if (Target.IsValid())
 	{
-		Target->Tabs.Add(TabRef);
+		// Taking its last tabs out above removes the group; dropping them back on it must not lose it.
+		if (!State->Groups.Contains(Target.ToSharedRef()))
+		{
+			State->Groups.Add(Target.ToSharedRef());
+		}
+		for (const TSharedRef<SDockTab>& Member : Moved)
+		{
+			Target->Tabs.Add(Member);
+		}
 	}
 	MarkChanged(State.Get());
+	if (bMovedBlock)
+	{
+		ClearTabSelection();
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1998,6 +2086,35 @@ TArray<TSharedRef<SDockTab>> FTabGroupsManager::GetSelectedTabs() const
 	return Out;
 }
 
+void FTabGroupsManager::BeginPressOnSelection()
+{
+	bPressedOnSelection = true;
+	DragBlock.Reset();
+	// Taken now, while every selected tab is still in the bar and in its original order.
+	for (const TSharedRef<SDockTab>& Tab : GetSelectedTabs())
+	{
+		DragBlock.Add(Tab);
+	}
+}
+
+void FTabGroupsManager::EndPressOnSelection(bool bIsDragging)
+{
+	if (!bPressedOnSelection)
+	{
+		return;
+	}
+	bPressedOnSelection = false;
+	if (bIsDragging)
+	{
+		bClearSelectionAfterDrag = true; // A drop on a tab bar uses the selection first; see AfterDrop.
+	}
+	else
+	{
+		DragBlock.Reset();
+		ClearTabSelection();
+	}
+}
+
 void FTabGroupsManager::ClearTabSelection()
 {
 	if (SelectedTabs.Num() == 0)
@@ -2073,7 +2190,9 @@ void FTabGroupsManager::SelectTabRange(const TSharedRef<SDockTab>& Tab)
 	SelectedTabs.Reset();
 	for (int32 Index = FMath::Min(From, To); Index <= FMath::Max(From, To); ++Index)
 	{
-		if (CanGroupOrPin(Tabs[Index]) && !IsPinned(Tabs[Index]))
+		const TSharedPtr<FTabGroup> Owner = FindGroupOfTab(Tabs[Index]);
+		const bool bHidden = Owner.IsValid() && Owner->bCollapsed;
+		if (!bHidden && CanGroupOrPin(Tabs[Index]) && !IsPinned(Tabs[Index]))
 		{
 			SelectedTabs.Add(Tabs[Index]);
 		}

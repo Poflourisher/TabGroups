@@ -446,6 +446,64 @@ namespace
 			});
 			Add(0.5f, [this]() { Check(TEXT("a plain click clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
 
+			// Dragging one selected tab brings the whole selection into the group it lands on.
+			Add(0.5f, [this]() { Raise(AssetTab(9)); Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(7).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]()
+			{
+				Check(TEXT("three tabs selected before the group drag"), Manager().GetSelectedTabs().Num() == 3);
+				DragTab = AssetTab(6);
+				DragFrom = TabCentre(DragTab.ToSharedRef());
+				DragTo = TabCentre(AssetTab(0).ToSharedRef());
+				Mouse(1, DragFrom);
+				Mouse(0, DragFrom);
+			});
+			Add(0.2f, [this]() { Check(TEXT("pressing a selected tab keeps the selection"), Manager().GetSelectedTabs().Num() == 3); Mouse(1, DragFrom + FVector2D(-12, 0)); });
+			Add(0.3f, [this]() { Mouse(1, FMath::Lerp(DragFrom, DragTo, 0.5)); });
+			Add(0.3f, [this]() { Mouse(1, DragTo); });
+			Add(0.5f, [this]() { Shot(TEXT("09h_dragging_selection")); });
+			Add(0.3f, [this]() { Mouse(2, DragTo); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Materials = GroupNamed(TEXT("Materials"));
+				Check(TEXT("all selected tabs joined the group"), Materials.IsValid() && Materials->Tabs.Num() == 6);
+				Shot(TEXT("09i_after_selection_drag"));
+				for (const int32 Index : { 6, 7, 9 })
+				{
+					Manager().RemoveFromGroup(AssetTab(Index).ToSharedRef());
+				}
+				DragTab.Reset();
+			});
+			Add(0.5f, [this]() { Check(TEXT("a drag clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
+
+			// Pressing and releasing a selected tab without dragging clears the selection.
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(9).ToSharedRef())); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef()), EKeys::LeftMouseButton, CtrlDown()); });
+			Add(0.5f, [this]() { Click(TabCentre(AssetTab(6).ToSharedRef())); });
+			Add(0.5f, [this]() { Check(TEXT("a click on a selected tab clears the selection"), Manager().GetSelectedTabs().Num() == 0); });
+
+			// The only tab of a group, dropped back on its own group, must not lose the group.
+			Add(0.5f, [this]() { Manager().CreateGroup(AssetTab(7).ToSharedRef(), TEXT("Lone"), 5, false); });
+			Add(1.f, [this]()
+			{
+				DragFrom = TabCentre(AssetTab(7).ToSharedRef());
+				Mouse(1, DragFrom);
+				Mouse(0, DragFrom);
+			});
+			Add(0.3f, [this]() { Mouse(1, DragFrom + FVector2D(12, 0)); });
+			Add(0.3f, [this]() { Mouse(1, DragFrom + FVector2D(2, 0)); });
+			Add(0.3f, [this]() { Mouse(2, DragFrom + FVector2D(2, 0)); });
+			Add(1.f, [this]()
+			{
+				const TSharedPtr<FTabGroup> Lone = GroupNamed(TEXT("Lone"));
+				Check(TEXT("a one-tab group survives dropping its tab back on it"), Lone.IsValid() && Lone->Tabs.Num() == 1);
+				if (Lone.IsValid())
+				{
+					Manager().Ungroup(Lone->Id);
+				}
+			});
+
 			// Colour wheel: a custom colour replaces the palette colour and survives saving.
 			Add(0.5f, [this]()
 			{
